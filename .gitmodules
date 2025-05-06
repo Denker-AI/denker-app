@@ -1,0 +1,9 @@
+[submodule "mcp-server-qdrant"]
+	path = mcp-server-qdrant
+	url = git@github.com:qdrant/mcp-server-qdrant.git
+[submodule "Quickchart-MCP-Server"]
+	path = Quickchart-MCP-Server
+	url = git@github.com:GongRzhe/Quickchart-MCP-Server.git
+[submodule "mcp-agent"]
+	path = mcp-agent
+	url = git@github.com:lastmile-ai/mcp-agent.git
