@@ -29,9 +29,9 @@ RUN pipx install poetry
 
 # Install Node.js packages
 RUN npm install -g npx
-RUN npm install -g @modelcontextprotocol/server-filesystem
+RUN npm install -g @modelcontextprotocol/server-filesystem@0.6.2
 # Install Quickchart MCP Server
-RUN npm install -g @gongrzhe/quickchart-mcp-server
+RUN npm install -g @gongrzhe/quickchart-mcp-server@1.0.4
 
 # Copy only files necessary for poetry install first to leverage Docker cache
 # Files are now expected in the build context (backend/)
