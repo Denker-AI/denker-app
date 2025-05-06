@@ -1,0 +1,62 @@
+[project]
+name = "denker-app-0-1-0"
+version = "0.1.0"
+description = "denker-ai"
+authors = [
+    {name = "jane"}
+]
+readme = "README.md"
+requires-python = "^3.11"
+dependencies = [
+    "markdownify (>=1.1.0,<2.0.0)",
+    "protego (>=0.4.0,<0.5.0)",
+    "readabilipy (>=0.3.0,<0.4.0)",
+    "mcp (==1.6.0)",
+    "mcp-server-fetch (==2025.1.17)",
+    "mcp-server-qdrant (==0.7.1)",
+    "fastmcp (>=0.1.0)",
+    "uvicorn (==0.23.2)",
+    "pydantic (>=2.7.4)",
+    "fastapi (>=0.105.0)",
+    "sqlalchemy (>=2.0.21)",
+    "alembic (>=1.12.0)",
+    "psycopg2-binary (>=2.9.7)",
+    "asyncpg (>=0.28.0)",
+    "python-multipart (>=0.0.6)",
+    "python-jose[cryptography] (>=3.3.0)",
+    "passlib[bcrypt] (>=1.7.4)",
+    "httpx (>=0.25.0)",
+    "tenacity (>=8.2.3)",
+    "jinja2 (>=3.1.2)",
+    "pyjwt (>=2.8.0)",
+    "openai (>=1.11.1)",
+    "tiktoken (>=0.5.1)",
+    "langchain (>=0.0.335)",
+    "langchain-openai (>=0.0.2)",
+    "langchain-community (>=0.0.10)",
+    "langchain-core (>=0.1.1)",
+    "chromadb (>=0.4.18)",
+    "qdrant-client (>=1.6.4)",
+    "pytesseract (>=0.3.10)",
+    "pypdf (>=3.17.0)",
+    "docx2txt (>=0.8)",
+    "pypdf2 (>=3.0.1)",
+    "redis (>=5.0.1)",
+    "sentence-transformers (>=2.2.2)",
+    "google-cloud-storage (>=2.10.0)",
+    "google-auth (>=2.22.0)",
+    "google-cloud-core (>=2.3.3)",
+    "google-generativeai (>=0.3.1)",
+    "google-cloud-aiplatform (>=1.36.4)",
+    "anthropic (==0.50.0)",
+    "mcp-agent (==0.0.17)",
+    "grpcio (>=1.71.0,<2.0.0)"
+]
+
+[tool.poetry]
+packages = [{include = "denker_app_0"}]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

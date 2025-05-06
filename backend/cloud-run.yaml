@@ -1,0 +1,59 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: denker-backend
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: "10"
+        autoscaling.knative.dev/minScale: "1"
+    spec:
+      containers:
+      - image: gcr.io/modular-bucksaw-424010-p6/denker-backend
+        ports:
+        - containerPort: 8001
+          name: http1
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: denker-secrets
+              key: postgres-password
+        - name: AUTH0_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: denker-secrets
+              key: auth0-secret
+        - name: POSTGRES_HOST
+          value: "10.156.0.3"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_USER
+          value: "postgres"
+        - name: POSTGRES_DB
+          value: "denker"
+        - name: MILVUS_HOST
+          value: "10.156.0.4"
+        - name: MILVUS_PORT
+          value: "19530"
+        - name: MILVUS_ENABLED
+          value: "true"
+        - name: MILVUS_USER
+          valueFrom:
+            secretKeyRef:
+              name: denker-secrets
+              key: milvus-user
+        - name: MILVUS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: denker-secrets
+              key: milvus-password
+        resources:
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+          requests:
+            cpu: "500m"
+            memory: "1Gi"
+      serviceAccountName: denker-sa

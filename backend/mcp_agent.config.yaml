@@ -1,0 +1,103 @@
+$schema: ../../schema/mcp-agent.config.schema.json
+app:
+  name: "Denker MCP Agent"
+  description: "Denker App's Multi-Component Protocol Agent Framework"
+  debug: true
+  log_level: "info"
+
+execution_engine: asyncio
+logger:
+  type: console
+  level: debug
+  batch_size: 100
+  flush_interval: 2
+  max_queue_size: 2048
+
+llm:
+  provider: "vertexai"  # Using Vertex AI for LLM
+  model: "gemini-2.0-flash-001"
+  temperature: 0.2
+  max_tokens: 2048
+
+mcp:
+  servers:
+    # Fetch server for HTTP requests
+    fetch:
+      command: "python"
+      args: ["-m", "mcp_server_fetch"]
+      description: "Fetch web content from URLs and convert to markdown"
+    
+    # Filesystem server for file access
+    # Using node to run the server directly instead of npx
+    filesystem:
+      command: "node"
+      args:
+        [
+          "/usr/local/lib/node_modules/@modelcontextprotocol/server-filesystem/dist/index.js",
+          "/app",
+          "/user_desktop",
+          "/user_downloads"
+        ]
+      description: "Access and manage files in allowed directories"
+    
+    # Qdrant server for vector search
+    qdrant:
+      command: "mcp-server-qdrant"
+      args: []
+      env:
+        {
+          "QDRANT_URL": "http://qdrant:6333",
+          "COLLECTION_NAME": "denker_embeddings",
+          "EMBEDDING_MODEL": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",  # Lightweight multilingual model
+          "EMBEDDING_MODEL_TYPE": "fastembed",  # Explicitly set the model type
+          "VECTOR_NAME": "fast-paraphrase-multilingual-minilm-l12-v2",  # Update vector name to match the model
+          "AUTO_CREATE_COLLECTION": "true",  # Ensure collection is created if it doesn't exist
+          "TOOL_STORE_DESCRIPTION": "Store documents with metadata for later retrieval. The 'information' parameter should contain the document content, while metadata should include file details like 'file_id', 'user_id', 'filename', etc. Use this for saving processed user files.",
+          "TOOL_FIND_DESCRIPTION": "Find relevant documents based on semantic search. The query parameter should describe what you're looking for. Returns the most relevant documents with their metadata. Use this to retrieve information from user-uploaded files and system knowledge."
+        }
+      description: "Search vector database of embeddings semantically"
+    
+    # Custom WebSearch server for Google Search
+    websearch:
+      command: "python"
+      args: ["-m", "mcp_local.servers.websearch.server"]
+      env:
+        {
+          "GOOGLE_API_KEY": "AIzaSyCa_aJ2I3j3L47mTI4YLSZYfI0moRnyw7A",
+          "GOOGLE_CSE_ID": "40d4f27f2b3a24796",
+          "MAX_RESULTS": "5"
+        }
+      description: "Search the web using Google Search API, returning relevant results with URLs"
+      
+    # Markdown Editor server for creating and editing markdown documents
+    markdown-editor:
+      command: "python"
+      args: ["-m", "mcp_local.servers.markdown_editor.server"]
+      description: "Create, edit, and convert Markdown documents with live preview capabilities"
+    
+    # QuickChart server for generating charts and visualizations
+    quickchart-server:
+      command: "node"
+      args: ["/usr/local/lib/node_modules/@gongrzhe/quickchart-mcp-server/build/index.js"]
+      description: "Generate charts, graphs, and visualizations from data"
+      
+    # Document Loader server for processing and extracting content from documents
+    document-loader:
+      command: "python"
+      args: ["-m", "mcp_local.servers.document_loader.server"]
+      description: "Process, parse, and extract content from various document formats"
+
+# Default workflow settings
+workflows:
+  parallel:
+    enabled: true
+    timeout: 120
+  
+  orchestrator:
+    enabled: true
+    timeout: 180
+  
+  swarm:
+    enabled: true
+    timeout: 180
+    max_turns: 10 

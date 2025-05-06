@@ -1,0 +1,102 @@
+{
+  "name": "denker-app",
+  "version": "0.1.0",
+  "description": "Denker - AI-powered desktop assistant",
+  "main": "public/electron.js",
+  "author": "Denker Team",
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "@auth0/auth0-react": "^2.2.1",
+    "@emotion/react": "^11.11.1",
+    "@emotion/styled": "^11.11.0",
+    "@mui/icons-material": "^5.14.16",
+    "@mui/material": "^5.14.16",
+    "axios": "^1.6.0",
+    "electron-is-dev": "^2.0.0",
+    "electron-store": "^8.1.0",
+    "marked": "^9.1.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-markdown": "^9.0.0",
+    "react-router-dom": "^6.18.0",
+    "react-syntax-highlighter": "^15.5.0",
+    "remark-gfm": "^4.0.0",
+    "robotjs": "^0.6.0",
+    "socket.io-client": "^4.7.2",
+    "uuid": "^9.0.1",
+    "zustand": "^4.4.6"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.10",
+    "@types/react": "^18.2.34",
+    "@types/react-dom": "^18.2.14",
+    "@types/react-syntax-highlighter": "^15.5.9",
+    "@types/uuid": "^9.0.7",
+    "@vitejs/plugin-react": "^4.1.1",
+    "concurrently": "^8.2.2",
+    "electron": "^27.0.2",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.2.2",
+    "vite": "^4.5.0",
+    "wait-on": "^7.0.1"
+  },
+  "scripts": {
+    "start": "vite",
+    "build": "vite build",
+    "electron:dev": "concurrently \"npm run start\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "electron:start": "electron ."
+  },
+  "build": {
+    "appId": "com.denker.app",
+    "productName": "Denker",
+    "files": [
+      "build/**/*",
+      "node_modules/**/*",
+      "public/electron.js"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "extendInfo": {
+        "NSServices": [
+          {
+            "NSMenuItem": {
+              "default": "Process with Denker"
+            },
+            "NSMessage": "processWithDenker",
+            "NSPortName": "Denker",
+            "NSRequiredContext": {
+              "NSTextContent": "NSStringPboardType"
+            },
+            "NSSendTypes": [
+              "NSStringPboardType"
+            ]
+          }
+        ]
+      },
+      "extraFiles": [
+        {
+          "from": "public/Info.plist",
+          "to": "Contents/Info.plist"
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Utility"
+    }
+  }
+}

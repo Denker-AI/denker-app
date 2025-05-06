@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.denker.app</string>
+    <key>CFBundleName</key>
+    <string>Denker</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>NSServices</key>
+    <array>
+        <dict>
+            <key>NSMenuItem</key>
+            <dict>
+                <key>default</key>
+                <string>Process with Denker</string>
+            </dict>
+            <key>NSMessage</key>
+            <string>processWithDenker</string>
+            <key>NSPortName</key>
+            <string>Denker</string>
+            <key>NSRequiredContext</key>
+            <dict>
+                <key>NSTextContent</key>
+                <string>NSStringPboardType</string>
+            </dict>
+            <key>NSSendTypes</key>
+            <array>
+                <string>NSStringPboardType</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist> 
