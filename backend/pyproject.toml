@@ -54,6 +54,11 @@ dependencies = [
 ]
 
 [tool.poetry]
+name = "denker-app-backend"
+version = "0.1.0"
+description = "Denker AI Backend"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
 packages = [{include = "denker_app_0"}]
 
 
