@@ -184,4 +184,11 @@ fi
 
 # Start the main application
 echo "Starting main application..."
-exec uvicorn main:app --host 0.0.0.0 --port 8001 --reload 
+# Check APP_ENV environment variable
+if [ "${APP_ENV}" = "production" ]; then
+  echo "Running in production mode (no reload)"
+  exec uvicorn main:app --host 0.0.0.0 --port 8001
+else
+  echo "Running in development mode (with reload)"
+  exec uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+fi 

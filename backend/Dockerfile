@@ -44,7 +44,7 @@ RUN poetry install --no-root
 # Copy application code (after installing dependencies)
 COPY . .
 
-# Make scripts executable
+# Make the main entrypoint script executable
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Expose the application port
