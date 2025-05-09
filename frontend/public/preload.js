@@ -34,6 +34,13 @@ ipcRenderer.on('api-loading', (event, isLoading) => {
   window.dispatchEvent(new CustomEvent('api-loading', { detail: isLoading }));
 });
 
+// Listen for navigation events
+ipcRenderer.on('navigate', (event, path) => {
+  console.log('preload: received navigate event to path:', path);
+  // Broadcast to any listeners
+  window.dispatchEvent(new CustomEvent('navigate', { detail: path }));
+});
+
 contextBridge.exposeInMainWorld(
   'electron',
   {
@@ -41,9 +48,20 @@ contextBridge.exposeInMainWorld(
     openMainWindow: () => ipcRenderer.invoke('open-main-window'),
     closeSubWindow: () => ipcRenderer.invoke('close-sub-window'),
     minimizeMainWindow: () => ipcRenderer.invoke('minimize-main-window'),
+    toggleTransparency: (isTransparent) => ipcRenderer.invoke('toggle-transparency', isTransparent),
+    
+    // Environment variables
+    getEnvVars: () => {
+      // Return all environment variables so they can be used in the renderer
+      return process.env;
+    },
     
     // API configuration
-    getApiUrl: () => ipcRenderer.invoke('get-api-url'),
+    getApiUrl: () => {
+      const args = process.argv;
+      const apiUrlArg = args.find(arg => arg.startsWith('--api-url='));
+      return apiUrlArg ? apiUrlArg.replace('--api-url=', '') : (process.env.VITE_API_URL || 'http://localhost:8001/api/v1');
+    },
     getApiKey: () => ipcRenderer.invoke('get-api-key'),
     
     // Data capture
@@ -93,5 +111,57 @@ contextBridge.exposeInMainWorld(
     // Screenshot and text capture
     getSelectedText: () => ipcRenderer.invoke('get-selected-text'),
     captureScreenshot: () => ipcRenderer.invoke('capture-screenshot'),
+    
+    // File system operations
+    openFile: async () => ipcRenderer.invoke('dialog:openFile'),
+    showDenkerFolder: () => ipcRenderer.invoke('fs:showDenkerFolder'),
+    downloadFile: (fileId) => ipcRenderer.invoke('fs:downloadFile', fileId),
+    
+    // Clipboard operations
+    writeToClipboard: (text) => ipcRenderer.invoke('clipboard:write', text),
+    readFromClipboard: () => ipcRenderer.invoke('clipboard:read'),
+    
+    // Window operations
+    minimizeToSystemTray: () => ipcRenderer.invoke('window:minimizeToSystemTray'),
+    toggleAlwaysOnTop: () => ipcRenderer.invoke('window:toggleAlwaysOnTop'),
+    
+    // Listener for Auth0 callback events
+    onAuth0Callback: (callback) => {
+      ipcRenderer.on('auth0-callback', (_, hashRoute) => {
+        callback(hashRoute);
+      });
+    },
+    
+    // Listener for deep linking events
+    onDeepLink: (callback) => {
+      ipcRenderer.on('deeplink-url', (_, url) => {
+        callback(url);
+      });
+    },
+    
+    // General utility functions
+    exitApp: () => ipcRenderer.invoke('app:exit')
   }
 );
+
+// Listen for messages directly from the main process
+ipcRenderer.on('store-updated', (_, data) => {
+  document.dispatchEvent(new CustomEvent('store-updated', { detail: data }));
+});
+
+// Listen for API loading state updates
+ipcRenderer.on('api-loading', (_, isLoading) => {
+  document.dispatchEvent(new CustomEvent('api-loading', { detail: isLoading }));
+});
+
+// Expose the listener for Auth0 callback in the window context directly
+ipcRenderer.on('auth0-callback', (_, hashRoute) => {
+  console.log('Auth0 callback received in preload:', hashRoute);
+  // Dispatch a custom event that can be listened to in the React app
+  document.dispatchEvent(new CustomEvent('auth0-callback-received', { detail: hashRoute }));
+  
+  // Also attempt to directly set the location hash
+  if (window.location) {
+    window.location.hash = hashRoute;
+  }
+});

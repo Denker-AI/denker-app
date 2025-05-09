@@ -3,6 +3,11 @@ const path = require('path');
 const isDev = require('electron-is-dev');
 const Store = require('electron-store');
 
+// Load environment variables from .env file when in development
+if (isDev) {
+  require('dotenv').config({ path: path.join(__dirname, '../.env') });
+}
+
 // Initialize store for app settings
 const store = new Store();
 
@@ -26,7 +31,96 @@ const MAX_CLIPBOARD_AGE = 20000;
 
 // Add API configuration
 const API_URL = process.env.VITE_API_URL || 'http://127.0.0.1:8001/api/v1';
+const WS_URL = process.env.VITE_WS_URL || 'ws://127.0.0.1:8001/api/v1';
 const API_KEY = process.env.VITE_API_KEY;
+
+// Store the API URLs for use in the renderer
+const RENDERER_ENV_VARS = {
+  VITE_API_URL: API_URL,
+  VITE_WS_URL: WS_URL,
+  VITE_API_KEY: API_KEY,
+  // Add Auth0 configuration
+  VITE_AUTH0_DOMAIN: process.env.VITE_AUTH0_DOMAIN,
+  VITE_AUTH0_CLIENT_ID: process.env.VITE_AUTH0_CLIENT_ID,
+  VITE_AUTH0_AUDIENCE: process.env.VITE_AUTH0_AUDIENCE,
+  VITE_NODE_ENV: process.env.VITE_NODE_ENV || (isDev ? 'development' : 'production')
+};
+
+// Parse any command line arguments
+let deeplinkingUrl;
+
+// This needs to happen before the app is ready
+// Handle the custom protocol (deep linking)
+if (process.defaultApp) {
+  // In development with Electron default app
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient('denker', process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  // In production
+  app.setAsDefaultProtocolClient('denker');
+}
+
+// Handle protocol URL (macOS)
+app.on('open-url', (event, url) => {
+  event.preventDefault();
+  deeplinkingUrl = url;
+  console.log('Protocol URL detected on macOS:', url);
+  
+  // If the app is already running, send the URL to the main window
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('deeplink-url', url);
+    
+    // For Auth0 callback, also strip the protocol part and send as a hash route
+    if (url.includes('callback')) {
+      const hashRoute = '#/callback';
+      mainWindow.webContents.send('auth0-callback', hashRoute);
+      
+      // Also set the window location to the callback route
+      mainWindow.webContents.executeJavaScript(`window.location.hash = '/callback';`);
+    }
+    
+    // Restore the window if minimized
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+  }
+});
+
+// Windows deep linking handler
+app.on('second-instance', (event, commandLine, workingDirectory) => {
+  console.log('Second instance detected with args:', commandLine);
+  
+  // Someone tried to run a second instance, we should focus our window.
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+    
+    // Check if there's a URL in the command line (deep linking)
+    const deepLinkUrl = commandLine.find(arg => arg.startsWith('denker://'));
+    if (deepLinkUrl) {
+      console.log('Protocol URL detected on Windows:', deepLinkUrl);
+      mainWindow.webContents.send('deeplink-url', deepLinkUrl);
+      
+      // For Auth0 callback, also strip the protocol part and send as a hash route
+      if (deepLinkUrl.includes('callback')) {
+        const hashRoute = '#/callback';
+        mainWindow.webContents.send('auth0-callback', hashRoute);
+        
+        // Also set the window location to the callback route
+        mainWindow.webContents.executeJavaScript(`window.location.hash = '/callback';`);
+      }
+    }
+  }
+});
+
+// Helper to calculate window width
+function calculateWindowWidth() {
+  return Math.floor(screen.getPrimaryDisplay().workAreaSize.width * MAIN_WINDOW_WIDTH_RATIO);
+}
 
 // Setup clipboard monitor
 function setupClipboardMonitor() {
@@ -351,15 +445,26 @@ function positionSubWindowNearCursor() {
 // Create the browser window
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: Math.floor(screen.getPrimaryDisplay().workAreaSize.width * MAIN_WINDOW_WIDTH_RATIO),
+    width: calculateWindowWidth(),
     height: screen.getPrimaryDisplay().workAreaSize.height,
+    x: screen.getPrimaryDisplay().workAreaSize.width - calculateWindowWidth(),
+    y: 0,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      additionalArguments: [
+        `--api-url=${RENDERER_ENV_VARS.VITE_API_URL}`,
+        `--ws-url=${RENDERER_ENV_VARS.VITE_WS_URL}`,
+        `--auth0-domain=${RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN || ''}`,
+        `--auth0-client-id=${RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID || ''}`,
+        `--auth0-audience=${RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE || ''}`,
+        `--node-env=${RENDERER_ENV_VARS.VITE_NODE_ENV || 'development'}`
+      ]
     },
     frame: false,
-    transparent: true,
+    transparent: false, // Start with non-transparent window for login
+    backgroundColor: '#121212', // Dark background when not transparent
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: true,
@@ -385,11 +490,25 @@ function createMainWindow() {
 
   // Handle window close button click
   mainWindow.on('close', (event) => {
-    if (!app.isQuiting) {
+    console.log('MainWindow close event triggered. app.isQuitting =', app.isQuitting);
+    
+    // Only prevent close if not quitting the app
+    if (!app.isQuitting) {
+      console.log('Preventing close and hiding window instead');
       event.preventDefault();
       mainWindow.hide();
       return false;
     }
+    
+    console.log('Allowing window to close because app.isQuitting is true');
+    // If we're quitting, make sure we destroy the window
+    setTimeout(() => {
+      if (mainWindow) {
+        console.log('Destroying main window from close handler');
+        mainWindow.destroy();
+        mainWindow = null;
+      }
+    }, 0);
   });
 
   // Handle window minimize
@@ -425,22 +544,53 @@ app.whenReady().then(() => {
   createMainWindow();
   registerGlobalShortcut();
   setupClipboardMonitor();
+  // Disable tray icon creation
+  // createTray();
+  setupAppMenu();
   
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
 });
 
-// Quit when all windows are closed, except on macOS
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
-
 // Clean up before quitting
 app.on('before-quit', () => {
+  console.log('Before quit event received - setting app.isQuitting to true');
+  // Mark that we're quitting
   app.isQuitting = true;
+  
+  // Clean up resources
+  if (clipboardMonitorInterval) {
+    clearInterval(clipboardMonitorInterval);
+    console.log('Cleared clipboard monitor interval');
+  }
+  
+  // Clean up tray if it exists
+  if (tray) {
+    tray.destroy();
+    tray = null;
+    console.log('Destroyed tray');
+  }
+  
+  // Ensure we're forcefully quitting
+  setTimeout(() => {
+    console.log('Force exit after timeout');
+    process.exit(0);
+  }, 1000);
+});
+
+// Add additional quit handler to ensure app closes
+app.on('quit', () => {
+  console.log('App quit event received');
+  // Force quit as a last resort
+  process.exit(0);
+});
+
+// Force quit when all windows are closed on macOS
+app.on('window-all-closed', () => {
+  console.log('All windows closed, quitting app');
+  app.isQuitting = true;
+  app.quit();
 });
 
 // IPC handlers
@@ -518,9 +668,258 @@ ipcMain.handle('get-api-key', () => {
   return API_KEY;
 });
 
-// Clean up before quitting
-app.on('will-quit', () => {
-  if (clipboardMonitorInterval) {
-    clearInterval(clipboardMonitorInterval);
+// Add new IPC handler for toggling window transparency
+ipcMain.handle('toggle-transparency', (event, isTransparent) => {
+  if (mainWindow) {
+    mainWindow.setBackgroundColor(isTransparent ? '#00000000' : '#121212');
+    mainWindow.setOpacity(isTransparent ? 0.9 : 1.0);
+    // Fix: setTransparent doesn't exist, use setVibrancy instead on macOS or simply set transparent property
+    if (process.platform === 'darwin') {
+      if (isTransparent) {
+        mainWindow.setVibrancy('ultra-dark');
+      } else {
+        mainWindow.setVibrancy(null);
+      }
+    }
+    return true;
   }
-}); 
+  return false;
+});
+
+// Create tray icon with context menu
+function createTray() {
+  // Skip tray creation completely
+  console.log('Tray icon creation disabled');
+  return;
+
+  // Original code (now unreachable)
+  const iconPath = path.join(__dirname, isDev ? './tray_icon.png' : './tray_icon.png');
+  
+  // Create smaller tray icon (16x16 for macOS)
+  tray = new Tray(iconPath);
+  
+  // Set icon size for macOS - the icon should be properly sized in the file already
+  // but we can adjust the context menu settings
+  tray.setToolTip('Denker');
+  
+  const contextMenu = Menu.buildFromTemplate([
+    { 
+      label: 'Show Denker', 
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+        }
+      } 
+    },
+    { type: 'separator' },
+    { 
+      label: 'Settings', 
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.webContents.send('navigate', '/settings');
+        }
+      } 
+    },
+    { 
+      label: 'About Denker', 
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.webContents.send('navigate', '/about');
+        }
+      } 
+    },
+    { type: 'separator' },
+    { 
+      label: 'Quit',
+      accelerator: 'CmdOrCtrl+Q',
+      click: () => {
+        console.log('Quit menu item clicked');
+        app.isQuitting = true;
+        app.quit();
+      } 
+    }
+  ]);
+  
+  tray.setContextMenu(contextMenu);
+  
+  // Show app when tray icon is clicked
+  tray.on('click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+    }
+  });
+}
+
+// Setup macOS app menu
+function setupAppMenu() {
+  // Create application menu
+  const template = [
+    // App menu (macOS only)
+    ...(process.platform === 'darwin' ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        // Add Settings submenu with Profile and Logout options
+        {
+          label: 'Settings',
+          submenu: [
+            {
+              label: 'Profile',
+              click: () => {
+                // Send navigate event to the renderer
+                if (mainWindow) {
+                  mainWindow.webContents.send('navigate', '/profile');
+                }
+              }
+            },
+            {
+              label: 'Logout',
+              click: () => {
+                // Send navigate event to trigger logout in renderer
+                if (mainWindow) {
+                  mainWindow.webContents.send('navigate', '/logout');
+                }
+              }
+            }
+          ]
+        },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { 
+          label: 'Quit',
+          accelerator: 'CmdOrCtrl+Q',
+          click: () => {
+            console.log('Quit menu item clicked');
+            // Force aggressive quit
+            app.isQuitting = true;
+            
+            // Destroy windows explicitly
+            if (subWindow) {
+              subWindow.destroy();
+              subWindow = null;
+            }
+            
+            if (mainWindow) {
+              mainWindow.removeAllListeners('close');
+              mainWindow.destroy();
+              mainWindow = null;
+            }
+            
+            // Force app to quit
+            app.quit();
+            
+            // As a last resort, exit the process after a short delay
+            setTimeout(() => {
+              process.exit(0);
+            }, 500);
+          } 
+        }
+      ]
+    }] : []),
+    
+    // File menu
+    {
+      label: 'File',
+      submenu: [
+        { role: 'close' }
+      ]
+    },
+    
+    // Edit menu
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        ...(process.platform === 'darwin' ? [
+          { role: 'pasteAndMatchStyle' },
+          { role: 'delete' },
+          { role: 'selectAll' },
+          { type: 'separator' },
+          {
+            label: 'Speech',
+            submenu: [
+              { role: 'startSpeaking' },
+              { role: 'stopSpeaking' }
+            ]
+          }
+        ] : [
+          { role: 'delete' },
+          { type: 'separator' },
+          { role: 'selectAll' }
+        ])
+      ]
+    },
+    
+    // View menu
+    {
+      label: 'View',
+      submenu: [
+        { role: 'reload' },
+        { role: 'forceReload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' }
+      ]
+    },
+    
+    // Window menu
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(process.platform === 'darwin' ? [
+          { type: 'separator' },
+          { role: 'front' },
+          { type: 'separator' },
+          { role: 'window' }
+        ] : [
+          { role: 'close' }
+        ])
+      ]
+    },
+    
+    // Help menu
+    {
+      label: 'Help',
+      submenu: [
+        {
+          label: 'Feedback',
+          click: () => {
+            // Send navigate event to the renderer
+            if (mainWindow) {
+              mainWindow.webContents.send('navigate', '/feedback');
+            }
+          }
+        },
+        {
+          label: 'Learn More',
+          click: async () => {
+            const { shell } = require('electron');
+            await shell.openExternal('https://denker.ai');
+          }
+        }
+      ]
+    }
+  ];
+  
+  const menu = Menu.buildFromTemplate(template);
+  Menu.setApplicationMenu(menu);
+} 
