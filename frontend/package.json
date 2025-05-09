@@ -1,7 +1,7 @@
 {
   "name": "denker-app",
-  "version": "0.1.0",
-  "description": "Denker - AI-powered desktop assistant",
+  "version": "0.1.1",
+  "description": "Denker AI - Your AI-powered Knowledge Partner",
   "main": "public/electron.js",
   "author": "Denker Team",
   "license": "MIT",
@@ -28,6 +28,7 @@
     "zustand": "^4.4.6"
   },
   "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
     "@types/node": "^20.8.10",
     "@types/react": "^18.2.34",
     "@types/react-dom": "^18.2.14",
@@ -35,8 +36,10 @@
     "@types/uuid": "^9.0.7",
     "@vitejs/plugin-react": "^4.1.1",
     "concurrently": "^8.2.2",
+    "dotenv": "^16.5.0",
     "electron": "^27.0.2",
     "electron-builder": "^24.13.3",
+    "node-abi": "^3.0.0",
     "typescript": "^5.2.2",
     "vite": "^4.5.0",
     "wait-on": "^7.0.1"
@@ -44,9 +47,13 @@
   "scripts": {
     "start": "vite",
     "build": "vite build",
-    "electron:dev": "concurrently \"npm run start\" \"wait-on http://localhost:5173 && electron .\"",
+    "build:prod": "vite build --mode production",
+    "electron:dev": "concurrently -k \"npm run start\" \"npm run wait-and-launch\"",
+    "wait-and-launch": "wait-on --delay 1000 --timeout 90000 --interval 1000 --verbose --httpTimeout 30000 http-get://localhost:5173/index.html && electron .",
     "electron:build": "npm run build && electron-builder",
-    "electron:start": "electron ."
+    "electron:build:prod": "npm run build:prod && electron-builder",
+    "electron:start": "electron .",
+    "postinstall": "electron-rebuild"
   },
   "build": {
     "appId": "com.denker.app",
@@ -57,9 +64,10 @@
       "public/electron.js"
     ],
     "directories": {
-      "buildResources": "assets"
+      "buildResources": "build"
     },
     "mac": {
+      "icon": "public/icon.icns",
       "category": "public.app-category.productivity",
       "extendInfo": {
         "NSServices": [
