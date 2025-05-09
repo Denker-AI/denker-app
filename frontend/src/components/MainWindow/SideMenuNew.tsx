@@ -723,6 +723,7 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
                 height: 48, 
                 cursor: 'pointer',
                 mr: 2,
+                bgcolor: theme.palette.grey[700],
                 '&:hover': {
                   opacity: 0.8,
                 }

@@ -14,6 +14,7 @@ import {
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EditIcon from '@mui/icons-material/Edit';
+import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 
 // Hooks
@@ -25,7 +26,7 @@ import { stringToColor } from '../utils/helpers';
 const ProfilePage: React.FC = () => {
   const theme = useTheme();
   const navigate = useNavigate();
-  const { profile, updateUserProfile, isLoading } = useUser();
+  const { profile, updateUserProfile, isLoading, logout } = useUser();
   
   // Local state for form values
   const [formValues, setFormValues] = useState({
@@ -69,8 +70,13 @@ const ProfilePage: React.FC = () => {
     navigate('/');
   };
   
-  // Generate avatar color based on name
-  const avatarColor = profile?.name ? stringToColor(profile.name) : theme.palette.primary.main;
+  // Handle logout
+  const handleLogout = () => {
+    logout();
+  };
+  
+  // Use a neutral color for avatar instead of generating one based on name
+  const avatarColor = theme.palette.grey[700]; // Neutral dark grey color
   
   // Get initials for avatar
   const getInitials = (name: string) => {
@@ -109,13 +115,24 @@ const ProfilePage: React.FC = () => {
         p: 3,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
-        <IconButton onClick={handleBack} sx={{ mr: 2 }}>
-          <ArrowBackIcon />
-        </IconButton>
-        <Typography variant="h5" component="h1">
-          Profile
-        </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, justifyContent: 'space-between' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center' }}>
+          <IconButton onClick={handleBack} sx={{ mr: 2 }}>
+            <ArrowBackIcon />
+          </IconButton>
+          <Typography variant="h5" component="h1">
+            Profile
+          </Typography>
+        </Box>
+        
+        <Button
+          variant="outlined"
+          color="error"
+          startIcon={<LogoutIcon />}
+          onClick={handleLogout}
+        >
+          Logout
+        </Button>
       </Box>
       
       <Paper

@@ -4,7 +4,7 @@ import useUserStore, { UserProfile, UserSettings } from '../store/userStore';
 import { useApi } from '../services/api';
 
 export const useUser = () => {
-  const { isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, user: auth0User } = useAuth0();
+  const { isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, user: auth0User, getAccessTokenSilently } = useAuth0();
   const api = useApi();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -20,16 +20,25 @@ export const useUser = () => {
     resetState,
   } = useUserStore();
   
+  // Clear user profile when logging in with a different account
+  useEffect(() => {
+    if (auth0User && profile && auth0User.sub !== profile.id) {
+      console.log('Different user detected, clearing cached profile');
+      resetState();
+    }
+  }, [auth0User, profile, resetState]);
+  
   // Load user profile from API when authenticated
   useEffect(() => {
-    if (isAuthenticated && auth0User && !profile) {
+    if (isAuthenticated && auth0User && (!profile || auth0User.sub !== profile.id)) {
+      console.log('Loading user profile for', auth0User.email);
       loadUserProfile();
     }
   }, [isAuthenticated, auth0User, profile]);
   
   // Load user profile from API
   const loadUserProfile = useCallback(async () => {
-    if (!isAuthenticated) return null;
+    if (!isAuthenticated || !auth0User) return null;
     
     setIsLoading(true);
     setError(null);
@@ -42,11 +51,13 @@ export const useUser = () => {
       const response = await api.getUserProfile();
       const userData = response.data;
       
+      console.log('Loaded user profile from API:', userData);
+      
       // Transform API response to match our store format
       const userProfile: UserProfile = {
-        id: userData.id,
-        email: userData.email,
-        name: userData.name,
+        id: userData.id || auth0User.sub,
+        email: userData.email || auth0User.email,
+        name: userData.name || auth0User.name,
         picture: userData.metadata?.picture || auth0User?.picture,
         metadata: userData.metadata,
       };
@@ -60,9 +71,11 @@ export const useUser = () => {
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load user profile';
       setError(errorMessage);
+      console.error('Error loading user profile:', errorMessage);
       
       // If we have Auth0 user data, create a minimal profile
       if (auth0User) {
+        console.log('Creating minimal profile from Auth0 user:', auth0User);
         const minimalProfile: UserProfile = {
           id: auth0User.sub || '',
           email: auth0User.email || '',
@@ -119,6 +132,9 @@ export const useUser = () => {
         metadata: updates.metadata,
       };
       
+      // User profile changes (like name) are stored in your application's database,
+      // not in Auth0. This ensures the changes persist across sessions and devices.
+      // The data is sent to the backend API which stores it in the database.
       const response = await api.updateUserProfile(allowedUpdates);
       const updatedData = response.data;
       
@@ -174,9 +190,46 @@ export const useUser = () => {
   
   // Handle logout
   const handleLogout = useCallback(() => {
+    console.log('Logging out and clearing user data');
     resetState();
+    
+    // Clear any cached Auth0 data from localStorage
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('auth0') || key.includes('auth0') || key.includes('denker'))) {
+        keysToRemove.push(key);
+      }
+    }
+    
+    keysToRemove.forEach(key => {
+      console.log('Removing cached key:', key);
+      localStorage.removeItem(key);
+    });
+    
+    // Log out from Auth0
     logout({ logoutParams: { returnTo: window.location.origin } });
   }, [logout, resetState]);
+  
+  // Handle custom login (clears any existing data first)
+  const handleLogin = useCallback(() => {
+    console.log('Initiating login, clearing any existing data');
+    resetState();
+    
+    // Clear any cached Auth0 data from localStorage
+    const keysToRemove = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && (key.startsWith('auth0') || key.includes('auth0') || key.includes('denker'))) {
+        keysToRemove.push(key);
+      }
+    }
+    
+    keysToRemove.forEach(key => localStorage.removeItem(key));
+    
+    // Log in with Auth0
+    loginWithRedirect();
+  }, [loginWithRedirect, resetState]);
   
   return {
     isAuthenticated,
@@ -186,7 +239,7 @@ export const useUser = () => {
     settings,
     
     // Auth actions
-    login: loginWithRedirect,
+    login: handleLogin,
     logout: handleLogout,
     
     // Profile actions
