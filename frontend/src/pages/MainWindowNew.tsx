@@ -12,8 +12,8 @@ import AgentStatusIndicator from '../components/AgentStatusIndicator';
 
 // Hooks
 import { useMainWindowHooks } from '../hooks';
-import { useAuth0 } from '@auth0/auth0-react';
-import { useApi } from '../services/api';
+import { useAuth } from '../auth/AuthContext';
+import api from '../services/api';
 import { Message } from '../types/types';
 import useMessageDatabaseUtils from '../hooks/conversation/messageDatabaseUtils';
 import { FileAttachment } from '../hooks/conversation/types';
@@ -21,10 +21,6 @@ import useRealTimeUpdates from '../hooks/conversation/useRealTimeUpdates';
 
 // Import MCPAgentClient with TypeScript support now available
 import MCPAgentClient from '../utils/mcp-agent-client';
-
-// --- ADDED: Import the singleton api instance --- 
-import api from '../services/api'; 
-// --- END ADDED ---
 
 // --- ADDED: Local definitions for MCP Callback types --- 
 interface MCPProgressData {
@@ -74,6 +70,7 @@ const MainWindowNew: React.FC = () => {
   const { conversation, file, network } = useMainWindowHooks();
   const { uploadFile } = useApi();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const { getAccessToken } = useAuth();
   
   // State for UI management
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(!isMobile);
@@ -85,9 +82,6 @@ const MainWindowNew: React.FC = () => {
   const [mcpAgentClient, setMcpAgentClient] = useState<any>(null);
   const [progressUpdates, setProgressUpdates] = useState<Record<string, string>>({});
   const [activeAgents, setActiveAgents] = useState<Record<string, boolean>>({});
-  
-  // Auth state
-  const { isLoading: isAuthLoading } = useAuth0();
   
   // Get database utilities for message persistence
   const { saveMessageToDatabase } = useMessageDatabaseUtils();
@@ -739,7 +733,7 @@ const MainWindowNew: React.FC = () => {
           }
         }
     }
-  }, [conversation, uploadFile, mcpAgentClient, activeQueryId, realTimeUpdates, saveMessageToDatabase, fallbackToStandardApi, isWaitingForClarification, isAuthLoading]);
+  }, [conversation, uploadFile, mcpAgentClient, activeQueryId, realTimeUpdates, saveMessageToDatabase, fallbackToStandardApi, isWaitingForClarification]);
   
   // Reset network status (useful when recovering from errors)
   const handleResetNetwork = useCallback(() => {
@@ -835,12 +829,12 @@ const MainWindowNew: React.FC = () => {
         // Immediately clean up frontend resources
         realTimeUpdates.cleanupQueryResources(queryIdToStop);
     }
-  }, [realTimeUpdates.activeQueryId, realTimeUpdates.cleanupQueryResources /*, mcpAgentClient, api*/]);
+  }, [realTimeUpdates.activeQueryId, realTimeUpdates.cleanupQueryResources]);
   // --- END ADDED ---
   
   // --- ADDED: Function to create a new conversation ---
   const handleCreateNewConversation = useCallback(async () => {
-    if (isAuthLoading || conversation.isLoading) return; // Prevent action while loading
+    if (conversation.isLoading) return; // Prevent action while loading
     try {
       console.log('[MainWindowNew] Creating new conversation via NavBar...');
       const newId = await conversation.createConversation('New Conversation');
@@ -855,11 +849,11 @@ const MainWindowNew: React.FC = () => {
       setAlertSeverity('error');
       setAlertOpen(true);
     }
-  }, [conversation, isAuthLoading, isMobile, isSideMenuOpen, toggleSideMenu]);
+  }, [conversation, isMobile, isSideMenuOpen, toggleSideMenu]);
   // --- END ADDED ---
   
   // Render loading state if not initialized or authenticating
-  if (isAuthLoading && !import.meta.env.DEV) {
+  if (conversation.isLoading && !import.meta.env.DEV) {
     return (
       <Box
         display="flex"
@@ -867,7 +861,7 @@ const MainWindowNew: React.FC = () => {
         alignItems="center"
         minHeight="100vh"
       >
-        <Alert severity="info">Authenticating...</Alert>
+        <Alert severity="info">Loading...</Alert>
       </Box>
     );
   }

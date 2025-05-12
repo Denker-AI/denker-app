@@ -6,6 +6,8 @@ declare global {
       waitForCaptureData: () => Promise<CaptureData>;
       openMainWindow: () => void;
       closeSubWindow: () => void;
+      minimizeMainWindow: () => void;
+      toggleTransparency: (isTransparent: boolean) => Promise<boolean>;
     }
   }
 } 

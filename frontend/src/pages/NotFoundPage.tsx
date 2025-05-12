@@ -8,6 +8,7 @@ import {
 } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import LoginNavBar from '../components/Auth/LoginNavBar';
 
 const NotFoundPage: React.FC = () => {
   const theme = useTheme();
@@ -17,17 +18,42 @@ const NotFoundPage: React.FC = () => {
   const handleGoHome = () => {
     navigate('/');
   };
+
+  // Handle reload for navbar
+  const handleReload = () => {
+    window.location.reload();
+  };
   
   return (
     <Box
+      className="error-container" // Add a specific class for debugging
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
         height: '100vh',
         width: '100%',
+        margin: 0,
+        padding: 0,
+        overflow: 'hidden',
         backgroundColor: theme.palette.background.default,
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        zIndex: 9999, // Ensure it appears above other content
+      }}
+    >
+      {/* Navbar */}
+      <LoginNavBar onReload={handleReload} />
+      
+      {/* Content */}
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          flexGrow: 1,
+          width: '100%',
         p: 3,
       }}
     >
@@ -68,6 +94,7 @@ const NotFoundPage: React.FC = () => {
           Go to Home
         </Button>
       </Paper>
+      </Box>
     </Box>
   );
 };

@@ -182,13 +182,26 @@ export const useAgentWebSocket = (queryId: string, conversationId?: string) => {
         console.log(`Creating new WebSocket connection for query ${queryId}`);
 
         // Create WebSocket connection URL
-        const wsUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001';
+        let wsBaseUrl;
+        // Check if in Electron context
+        if (window.electron) {
+          // Use Electron's environment variables
+          wsBaseUrl = window.electron.getEnvVars().VITE_WS_URL;
+        } else {
+          // Fallback to Vite env vars
+          wsBaseUrl = import.meta.env.VITE_WS_URL;
+          if (!wsBaseUrl) {
+            // Convert API URL to WS URL if WS URL not provided
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
+            wsBaseUrl = apiUrl.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
+          }
+        }
+
         let endpoint = `/api/v1/agents/ws/mcp-agent/${queryId}`;
         if (conversationId) {
           endpoint += `?conversation_id=${conversationId}`;
         }
-        const baseWsUrl = wsUrl.replace(/^http/, 'ws');
-        const wsEndpoint = baseWsUrl.replace(/\/api\/v1\/?$/, '') + endpoint;
+        const wsEndpoint = wsBaseUrl + endpoint;
         
         console.log(`Connecting to WebSocket endpoint: ${wsEndpoint}`);
         

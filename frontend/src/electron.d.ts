@@ -2,9 +2,14 @@ import { ElectronAPI } from './types/types';
 
 interface ElectronAPI {
   getEnvVars: () => {
-    VITE_API_URL: string;
-    VITE_WS_URL: string;
-    [key: string]: string;
+    VITE_API_URL?: string;
+    VITE_WS_URL?: string;
+    VITE_AUTH0_DOMAIN?: string;
+    VITE_AUTH0_CLIENT_ID?: string;
+    VITE_AUTH0_AUDIENCE?: string;
+    VITE_NODE_ENV?: string;
+    NODE_ENV?: string;
+    [key: string]: string | undefined;
   };
   getApiUrl: () => string;
   getApiKey: () => Promise<string>;

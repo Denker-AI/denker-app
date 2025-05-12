@@ -2,8 +2,18 @@
  * API Service for making HTTP requests to the backend
  */
 
-// Base API URL from environment variables
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
+// Base API URL from environment variables or Electron context
+const getApiUrl = () => {
+  // Check if in Electron context
+  if (window.electron) {
+    // Use Electron's environment variables
+    return window.electron.getEnvVars().VITE_API_URL;
+  }
+  // Fallback to Vite env vars or default
+  return import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
+};
+
+const API_URL = getApiUrl();
 
 // Default headers
 const defaultHeaders = {

@@ -1,6 +1,24 @@
 #!/bin/bash
 set -e
 
+# Log environment info for debugging
+echo "Starting Denker Backend"
+echo "Python version: $(python --version)"
+echo "Running on port: ${PORT:-8001}"
+
+# Add CloudRun specific checks
+if [ -n "$K_SERVICE" ]; then
+    echo "Running in Cloud Run environment: $K_SERVICE"
+    # CloudRun specific setup can go here
+    export PUBLIC_URL="https://${K_SERVICE}-${K_REVISION}.run.app"
+    echo "Public URL: $PUBLIC_URL"
+fi
+
+# Default to 8001 if PORT not set (for dev environments)
+if [ -z "$PORT" ]; then
+    export PORT=8001
+fi
+
 echo "Starting initialization..."
 echo "All dependencies are pre-installed during image build"
 
@@ -13,9 +31,9 @@ if [ -f .env ]; then
   export $(grep -v '^#' .env | xargs)
 fi
 
-# Force PostgreSQL host to host.docker.internal for SSH tunnels
-export POSTGRES_HOST="host.docker.internal"
-export POSTGRES_PORT=${POSTGRES_PORT:-"5432"}
+# Set default POSTGRES_HOST for local Docker development if not already set
+export POSTGRES_HOST="${POSTGRES_HOST:-host.docker.internal}"
+export POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 
 # Determine Qdrant connection
 USE_LOCAL_QDRANT_LOWER=$(echo "${USE_LOCAL_QDRANT:-false}" | tr '[:upper:]' '[:lower:]')
@@ -23,15 +41,13 @@ if [ "${USE_LOCAL_QDRANT_LOWER}" = "true" ]; then
   # Force using local Qdrant container
   export QDRANT_URL="http://qdrant:6333"
   echo "Forcing use of local Qdrant container at ${QDRANT_URL}"
+elif [ -n "$QDRANT_URL" ]; then
+  # QDRANT_URL is already set by the environment, use it as is
+  echo "Using QDRANT_URL from environment: ${QDRANT_URL}"
 else
-  # Check if using local Qdrant container
-  if [[ "$QDRANT_URL" == http://qdrant* ]]; then
-    echo "Using local Qdrant container at ${QDRANT_URL}"
-  else
-    # Use SSH tunnel for remote Qdrant
-    export QDRANT_URL="http://host.docker.internal:6333"
-    echo "Using remote Qdrant via SSH tunnel at ${QDRANT_URL}"
-  fi
+  # Default to host.docker.internal for local SSH tunnel if QDRANT_URL is not set and not using local qdrant container
+  export QDRANT_URL="http://host.docker.internal:6333"
+  echo "Defaulting QDRANT_URL for local SSH tunnel: ${QDRANT_URL}"
 fi
 
 echo "Using PostgreSQL connection: ${POSTGRES_HOST}:${POSTGRES_PORT}"
@@ -133,17 +149,25 @@ if [ "${QDRANT_ENABLED_LOWER}" = "true" ]; then
       COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-"denker_embeddings"}
       
       echo "Checking for collection: ${COLLECTION_NAME}..."
-      COLLECTIONS_RESPONSE=$(curl -s "${QDRANT_URL}/collections")
+      LIST_HEADERS=()
+      if [ -n "$QDRANT_API_KEY" ]; then
+        LIST_HEADERS+=(-H "api-key: ${QDRANT_API_KEY}")
+      fi
+      COLLECTIONS_RESPONSE=$(curl -s "${LIST_HEADERS[@]}" "${QDRANT_URL}/collections")
       
       if echo "${COLLECTIONS_RESPONSE}" | grep -q "$COLLECTION_NAME"; then
         echo "Collection ${COLLECTION_NAME} already exists in Qdrant."
       else
         echo "Creating collection ${COLLECTION_NAME} in Qdrant..."
+        HEADERS=(-H 'Content-Type: application/json')
+        if [ -n "$QDRANT_API_KEY" ]; then
+          HEADERS+=(-H "api-key: ${QDRANT_API_KEY}")
+        fi
         CREATION_RESPONSE=$(curl -X PUT "${QDRANT_URL}/collections/${COLLECTION_NAME}" \
-          -H 'Content-Type: application/json' \
+          "${HEADERS[@]}" \
           -d "{
             \"vectors\": {
-              \"size\": ${QDRANT_VECTOR_SIZE:-768},
+              \"size\": ${QDRANT_VECTOR_SIZE:-384},
               \"distance\": \"Cosine\"
             }
           }")
@@ -187,8 +211,8 @@ echo "Starting main application..."
 # Check APP_ENV environment variable
 if [ "${APP_ENV}" = "production" ]; then
   echo "Running in production mode (no reload)"
-  exec uvicorn main:app --host 0.0.0.0 --port 8001
+  exec python -m uvicorn main:app --host 0.0.0.0 --port $PORT --log-level debug
 else
   echo "Running in development mode (with reload)"
-  exec uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+  exec python -m uvicorn main:app --host 0.0.0.0 --port $PORT --reload --log-level debug
 fi 

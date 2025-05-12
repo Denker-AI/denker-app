@@ -31,6 +31,20 @@ export interface StepData {
 }
 
 export class WebSocketService {
+  constructor(url: string, options: any = {}) {
+    this.url = url || this.getWebsocketUrl();
+    this.options = options;
+    this.reconnectAttempts = 0;
+    this.status = 'disconnected';
+    this.messageQueue = [];
+    this.listeners = {
+      message: [],
+      open: [],
+      close: [],
+      error: []
+    }
+  }
+
   // ...existing code...
 
   private processWebSocketMessage(event: MessageEvent) {
@@ -125,5 +139,21 @@ export class WebSocketService {
         originalError: error
       });
     }
+  }
+
+  // Get the WebSocket URL from environment variables or Electron
+  private getWebsocketUrl() {
+    // Check if in Electron context
+    if (window.electron) {
+      // Use Electron's environment variables
+      return window.electron.getEnvVars().VITE_WS_URL.replace('http', 'ws').replace('/api/v1', '');
+    }
+    // Fallback to Vite env vars or convert API URL to WS URL
+    const wsUrl = import.meta.env.VITE_WS_URL;
+    if (wsUrl) return wsUrl;
+    
+    // If no WS URL is provided, convert API URL to WS URL
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
+    return apiUrl.replace('http', 'ws').replace('/api/v1', '');
   }
 } 

@@ -1,13 +1,14 @@
-import React from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth0 } from '@auth0/auth0-react';
+import React, { useEffect } from 'react';
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { useAuth } from './auth/AuthContext';
 
 // Components
-import { LoadingScreen } from './components/common';
+import { LoadingScreen } from './components/Common';
 import { 
   FileSystemPermissionProvider, 
   FileSystemActivityProvider 
 } from './components/FileSystem';
+import AuthTransparencyToggle from './components/AuthTransparencyToggle';
 
 // Pages
 import MainWindowNew from './pages/MainWindowNew';
@@ -19,41 +20,104 @@ import FeedbackPage from './pages/FeedbackPage';
 import FilesPage from './pages/FilesPage';
 import AboutPage from './pages/AboutPage';
 import NotFoundPage from './pages/NotFoundPage';
+import AuthErrorPage from './pages/AuthErrorPage';
 import HelpPage from './pages/HelpPage';
 import ContactPage from './pages/ContactPage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import TestPage from './pages/TestPage';
 
-// For development, bypass authentication
-const isDev = import.meta.env.DEV || import.meta.env.VITE_NODE_ENV === 'development';
-
 // Auth guard component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, isLoading } = useAuth0();
-
-  if (isDev) {
-    // Bypass authentication in development mode
-    return <>{children}</>;
-  }
+  const { isAuthenticated, isLoading } = useAuth();
 
   if (isLoading) {
-    return <LoadingScreen message="Authenticating..." />;
+    return <LoadingScreen message="Checking authentication..." />;
   }
 
   if (!isAuthenticated) {
+    console.log('[ProtectedRoute] Not authenticated, redirecting to /login');
     return <Navigate to="/login" replace />;
   }
 
   return <>{children}</>;
 };
 
+// Logout route component
+const LogoutRoute = () => {
+  const { logout, isLoading, isAuthenticated } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    console.log('[Logout Route] Calling logout...');
+    logout();
+  }, [logout]);
+
+  useEffect(() => {
+    if (!isLoading && !isAuthenticated) {
+      console.log('[Logout Route] Logout confirmed by context, navigating to /login');
+      navigate('/login', { replace: true });
+    }
+  }, [isLoading, isAuthenticated, navigate]);
+
+  return <LoadingScreen message="Logging out..." />;
+};
+
 function App() {
+  const navigate = useNavigate();
+  const isElectron = window.electron !== undefined;
+
+  // Listen for navigation events from Electron main process
+  useEffect(() => {
+    if (isElectron) {
+      const handleNavigate = (event: CustomEvent) => {
+        const path = event.detail;
+        console.log('Received navigate event to:', path);
+        
+        // Handle special paths like logout
+        if (path === '/logout') {
+          console.log('Processing logout navigation event');
+          navigate(path);
+        } 
+        // Handle feedback path
+        else if (path === '/feedback') {
+          console.log('Processing feedback navigation event');
+          navigate(path);
+        }
+        // Handle all other paths
+        else {
+          navigate(path);
+        }
+      };
+
+      window.addEventListener('navigate', handleNavigate as EventListener);
+      
+      return () => {
+        window.removeEventListener('navigate', handleNavigate as EventListener);
+      };
+    }
+  }, [navigate, isElectron]);
+
   return (
+    <>
+      {/* This component manages window transparency based on auth state */}
+      <AuthTransparencyToggle />
+      
+      <Routes>
+        {/* Public routes that need to be outside the FileSystemProviders */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/404" element={<NotFoundPage />} />
+        <Route path="/auth/error" element={<AuthErrorPage />} />
+        <Route path="/subwindow" element={<SubWindow />} />
+        <Route path="/logout" element={<LogoutRoute />} />
+        
+        {/* Routes that need FileSystem providers */}
+        <Route
+          path="*"
+          element={
     <div className="app-container">
       <FileSystemPermissionProvider>
         <FileSystemActivityProvider>
           <Routes>
-            <Route path="/login" element={<Login />} />
             <Route
               path="/"
               element={
@@ -62,7 +126,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/subwindow" element={<SubWindow />} />
             <Route path="/test" element={<TestPage />} />
             <Route
               path="/settings"
@@ -128,12 +191,16 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/404" element={<NotFoundPage />} />
+                    {/* Catch remaining routes and redirect to 404 */}
             <Route path="*" element={<Navigate to="/404" replace />} />
           </Routes>
         </FileSystemActivityProvider>
       </FileSystemPermissionProvider>
     </div>
+          }
+        />
+      </Routes>
+    </>
   );
 }
 

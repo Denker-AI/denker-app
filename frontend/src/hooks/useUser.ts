@@ -1,124 +1,92 @@
-import { useState, useCallback, useEffect } from 'react';
-import { useAuth0 } from '@auth0/auth0-react';
+import { useState, useCallback } from 'react';
+// import { useAuth0 } from '@auth0/auth0-react'; // REMOVE Auth0 dependency
 import useUserStore, { UserProfile, UserSettings } from '../store/userStore';
-import { useApi } from '../services/api';
+// REMOVE useApi import
+// import { useApi } from '../services/api';
+import api from '../services/api'; // IMPORT default axios instance
 
 export const useUser = () => {
-  const { isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, user: auth0User, getAccessTokenSilently } = useAuth0();
-  const api = useApi();
+  // REMOVE Auth0 related state/hooks
+  // const { isAuthenticated, isLoading: isAuthLoading, loginWithRedirect, logout, user: auth0User } = useAuth0();
+  // const api = useApi(); // REMOVED
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Get user state from store
-  const {
-    profile,
-    settings,
-    setProfile,
-    updateProfile,
-    setSettings,
-    updateSettings,
-    resetState,
-  } = useUserStore();
-  
-  // Clear user profile when logging in with a different account
-  useEffect(() => {
-    if (auth0User && profile && auth0User.sub !== profile.id) {
-      console.log('Different user detected, clearing cached profile');
-      resetState();
-    }
-  }, [auth0User, profile, resetState]);
-  
-  // Load user profile from API when authenticated
-  useEffect(() => {
-    if (isAuthenticated && auth0User && (!profile || auth0User.sub !== profile.id)) {
-      console.log('Loading user profile for', auth0User.email);
-      loadUserProfile();
-    }
-  }, [isAuthenticated, auth0User, profile]);
+  // Zustand store selectors and actions
+  const { profile, settings, setProfile, setSettings, updateProfile, updateSettings, resetState } = useUserStore();
   
   // Load user profile from API
   const loadUserProfile = useCallback(async () => {
-    if (!isAuthenticated || !auth0User) return null;
+    // REMOVED Auth0 check
+    console.log('🔍 Starting loadUserProfile.');
     
     setIsLoading(true);
     setError(null);
     
     try {
-      // First, ensure we're logged in with the backend
-      await api.login();
+      // REMOVED backend login call (should be handled by auth flow)
+      // console.log('🌐 Attempting backend login');
+      // const loginResponse = await api.login(); 
+      // console.log('✅ Backend login successful:', loginResponse);
       
-      // Then get the user profile
-      const response = await api.getUserProfile();
+      // Fetch the user profile using the directly imported api instance
+      console.log('👤 Fetching user profile');
+      const response = await api.get('/users/profile'); // USE api.get directly
       const userData = response.data;
       
-      console.log('Loaded user profile from API:', userData);
+      console.log('✨ Loaded user profile from API:', userData);
       
       // Transform API response to match our store format
       const userProfile: UserProfile = {
-        id: userData.id || auth0User.sub,
-        email: userData.email || auth0User.email,
-        name: userData.name || auth0User.name,
-        picture: userData.metadata?.picture || auth0User?.picture,
+        id: userData.id, // Use ID from backend
+        email: userData.email,
+        name: userData.name,
+        picture: userData.metadata?.picture, // Get picture from metadata if available
         metadata: userData.metadata,
       };
       
+      console.log('💾 Setting user profile:', userProfile);
       setProfile(userProfile);
       
       // Load user settings
+      console.log('⚙️ Loading user settings');
       await loadUserSettings();
       
+      console.log('🎉 User profile and settings loaded successfully');
       return userProfile;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to load user profile';
+      console.error('❌ Error loading user profile:', errorMessage, err);
       setError(errorMessage);
-      console.error('Error loading user profile:', errorMessage);
-      
-      // If we have Auth0 user data, create a minimal profile
-      if (auth0User) {
-        console.log('Creating minimal profile from Auth0 user:', auth0User);
-        const minimalProfile: UserProfile = {
-          id: auth0User.sub || '',
-          email: auth0User.email || '',
-          name: auth0User.name || '',
-          picture: auth0User.picture,
-        };
-        setProfile(minimalProfile);
-        return minimalProfile;
-      }
-      
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [isAuthenticated, auth0User, api, setProfile]);
+  }, [setProfile, updateProfile]); // REMOVED api, auth0User, isAuthenticated dependencies
   
   // Load user settings from API
   const loadUserSettings = useCallback(async () => {
-    if (!isAuthenticated) return null;
-    
-    setIsLoading(true);
-    setError(null);
-    
+    // REMOVED Auth0 check
+    setIsLoading(true); // Keep loading state management if needed
     try {
-      const response = await api.getUserSettings();
-      const settingsData = response.data;
-      
-      setSettings(settingsData);
-      
-      return settingsData;
+      const response = await api.get('/users/settings'); // USE api.get directly
+      console.log('💾 Setting user settings:', response.data);
+      setSettings(response.data);
+      return response.data;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to load user settings';
-      setError(errorMessage);
+      console.error('Error loading user settings:', err);
+      // Don't necessarily set a global error here, maybe handle locally
       return null;
     } finally {
-      setIsLoading(false);
+      setIsLoading(false); // Keep loading state management if needed
     }
-  }, [isAuthenticated, api, setSettings]);
+  }, [setSettings]); // REMOVED api, isAuthenticated dependencies
   
   // Update user profile
   const updateUserProfile = useCallback(async (updates: Partial<UserProfile>) => {
-    if (!isAuthenticated || !profile) {
-      setError('User not authenticated');
+    // REMOVED Auth0 check
+    if (!profile) { // Check if profile exists locally
+      setError('User profile not loaded');
       return null;
     }
     
@@ -135,7 +103,7 @@ export const useUser = () => {
       // User profile changes (like name) are stored in your application's database,
       // not in Auth0. This ensures the changes persist across sessions and devices.
       // The data is sent to the backend API which stores it in the database.
-      const response = await api.updateUserProfile(allowedUpdates);
+      const response = await api.put('/users/profile', allowedUpdates); // USE api.put directly
       const updatedData = response.data;
       
       // Update local state
@@ -156,99 +124,39 @@ export const useUser = () => {
     } finally {
       setIsLoading(false);
     }
-  }, [isAuthenticated, profile, api, updateProfile]);
+  }, [profile, api, updateProfile]); // Keep api dependency? No, interceptor handles it.
   
   // Update user settings
   const updateUserSettings = useCallback(async (updates: Partial<UserSettings>) => {
-    if (!isAuthenticated) {
-      setError('User not authenticated');
-      return null;
-    }
-    
+    // REMOVED Auth0 check
     setIsLoading(true);
     setError(null);
-    
     try {
-      // Update local state immediately for better UX
-      updateSettings(updates);
-      
-      // Then send to API
-      const response = await api.updateUserSettings({
-        ...settings,
-        ...updates,
-      });
-      
+      const response = await api.put('/users/settings', updates); // USE api.put directly
+      updateSettings(response.data); // Update store with response
       return response.data;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'Failed to update user settings';
+      const errorMessage = err instanceof Error ? err.message : 'Failed to update settings';
       setError(errorMessage);
+      // Optionally revert or update locally despite error
       return null;
     } finally {
       setIsLoading(false);
     }
-  }, [isAuthenticated, settings, api, updateSettings]);
+  }, [updateSettings]); // REMOVED api, isAuthenticated dependencies
   
-  // Handle logout
-  const handleLogout = useCallback(() => {
-    console.log('Logging out and clearing user data');
-    resetState();
-    
-    // Clear any cached Auth0 data from localStorage
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (key.startsWith('auth0') || key.includes('auth0') || key.includes('denker'))) {
-        keysToRemove.push(key);
-      }
-    }
-    
-    keysToRemove.forEach(key => {
-      console.log('Removing cached key:', key);
-      localStorage.removeItem(key);
-    });
-    
-    // Log out from Auth0
-    logout({ logoutParams: { returnTo: window.location.origin } });
-  }, [logout, resetState]);
-  
-  // Handle custom login (clears any existing data first)
-  const handleLogin = useCallback(() => {
-    console.log('Initiating login, clearing any existing data');
-    resetState();
-    
-    // Clear any cached Auth0 data from localStorage
-    const keysToRemove = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (key.startsWith('auth0') || key.includes('auth0') || key.includes('denker'))) {
-        keysToRemove.push(key);
-      }
-    }
-    
-    keysToRemove.forEach(key => localStorage.removeItem(key));
-    
-    // Log in with Auth0
-    loginWithRedirect();
-  }, [loginWithRedirect, resetState]);
-  
+  // Return the state and functions (remove Auth0 specific ones)
   return {
-    isAuthenticated,
-    isLoading: isLoading || isAuthLoading,
-    error,
     profile,
     settings,
-    
-    // Auth actions
-    login: handleLogin,
-    logout: handleLogout,
-    
-    // Profile actions
+    isLoading,
+    error,
     loadUserProfile,
     updateUserProfile,
-    
-    // Settings actions
     loadUserSettings,
     updateUserSettings,
+    resetState, // Keep reset state from store
+    // REMOVED: loginWithRedirect, logout
   };
 };
 

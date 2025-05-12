@@ -152,7 +152,7 @@ async def process_orchestrator_workflow(
                 workflow_type=workflow_type,
                 completion_time=time.time() - start_time
             )
-            
+        
         # <<< Send WebSocket Update >>>
         if websocket_manager:
             logger.info(f"[{query_id}] Sending orchestration start status update.")

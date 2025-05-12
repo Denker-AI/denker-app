@@ -834,7 +834,7 @@ export const useRealTimeUpdates = () => {
 
         return; // Handled this update type
     }
-    // --- END ADDED --- 
+    // --- END ADDED ---
 
     // The rest of the hook handles other step types (status, result, progress etc.)
     else {

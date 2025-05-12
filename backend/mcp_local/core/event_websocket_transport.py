@@ -283,7 +283,7 @@ class WebSocketEventTransport(EventTransport):
             elif 'augmented_llm' in event.namespace:
                  # Use a generic LLM state if progress_action didn't specify
                  return "Running" # Default for LLM
-
+            
         # Default fallback
         logger.debug(f"Could not determine specific step type for namespace '{event.namespace}', falling back to Unknown.")
         return "Unknown"
@@ -345,7 +345,7 @@ class WebSocketEventTransport(EventTransport):
             except Exception:
                 truncated_raw_data = "<Error representing raw_event_data>"
             logger.debug(f"[{query_id}] Processing Event - Namespace: {namespace}, StepType: {step_type}, Workflow: {workflow_type or 'N/A'}, OrigMsg: '{original_message[:100]}...', RawData: {truncated_raw_data}")
-            # --- END ADDED --- 
+            # --- END ADDED ---
 
             parsed_details = {}
             first_text_block_content = None # Variable to store text
@@ -473,13 +473,13 @@ class WebSocketEventTransport(EventTransport):
                 default_context = namespace.split('.')[-1] if namespace != 'unknown' else 'Agent'
                 final_message_to_send = f"{default_context}: {step_type}"
             # <<< END Conditional Message Placeholder >>>
-            # --- End message determination --- 
+            # --- End message determination ---
 
-            # --- ADDED: Log parsed details and final message (Moved slightly earlier) --- 
+            # --- ADDED: Log parsed details and final message (Moved slightly earlier) ---
             logger.debug(f"[{query_id}] PRE-SEND CHECK - StepType: {step_type}, IsToolResponse: {is_tool_response}, ToolName: {tool_name}, FirstText: '{first_text_block_content}', ResultText: '{tool_call_result_text}'")
             logger.debug(f"[{query_id}] PRE-SEND CHECK - Parsed Details: {parsed_details}")
             logger.debug(f"[{query_id}] PRE-SEND CHECK - Final Message to Send: '{final_message_to_send[:200]}'")
-            # --- END ADDED --- 
+            # --- END ADDED ---
 
             # Prepare data payload
             # Use a helper function to safely get attributes

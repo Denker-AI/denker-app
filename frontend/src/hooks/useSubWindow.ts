@@ -11,16 +11,23 @@ export const useSubWindow = () => {
   useEffect(() => {
     console.log('🪟 Subwindow hook initialized');
     
+    let unsubscribeLoading = () => {};
+
     // Listen for API loading state changes
-    const unsubscribeLoading = window.electron.onApiLoadingChange((isLoading) => {
-      console.log('🔄 API loading state changed:', isLoading);
-      setIsLoading(isLoading);
-      
-      // Clear error when starting a new request
-      if (isLoading) {
-        setError(null);
-      }
-    });
+    if (window.electron && typeof window.electron.onApiLoadingChange === 'function') {
+      unsubscribeLoading = window.electron.onApiLoadingChange((isLoading) => {
+        console.log('🔄 API loading state changed:', isLoading);
+        setIsLoading(isLoading);
+        
+        // Clear error when starting a new request
+        if (isLoading) {
+          setError(null);
+        }
+      });
+    } else {
+      console.error('❌ window.electron.onApiLoadingChange is not available when useSubWindow mounted.');
+      // Optionally, set an error state here or retry later
+    }
     
     // Handle initial capture data
     const handleCaptureData = async () => {

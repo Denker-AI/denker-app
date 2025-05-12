@@ -40,10 +40,16 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict this to your frontend domain
+    # In production, add allowed origins for both localhost (dev) and electron app schemes
+    allow_origins=[
+        "http://localhost:*",  # Local development 
+        "https://denker-frontend.app",  # If you have a specific URL for your Electron app
+        "denker://*",  # For Electron custom URL scheme if used
+    ] if not settings.DEBUG else ["*"],  # In debug mode, allow all origins
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],  # Important for file downloads
 )
 
 # Add WebSocket-specific CORS headers

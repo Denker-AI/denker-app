@@ -55,6 +55,26 @@ export interface ElectronAPI {
   onWindowMinimize: (callback: () => void) => () => void;
   onWindowMaximize: (callback: () => void) => () => void;
   onWindowUnmaximize: (callback: () => void) => () => void;
+  getEnvVars: () => {
+    VITE_API_URL?: string;
+    VITE_WS_URL?: string;
+    VITE_AUTH0_DOMAIN?: string;
+    VITE_AUTH0_CLIENT_ID?: string;
+    VITE_AUTH0_AUDIENCE?: string;
+    VITE_NODE_ENV?: string;
+    NODE_ENV?: string;
+    [key: string]: string | undefined;
+  };
+  openFile: () => Promise<string>;
+  showDenkerFolder: () => Promise<void>;
+  downloadFile: (fileId: string) => Promise<void>;
+  writeToClipboard: (text: string) => Promise<void>;
+  readFromClipboard: () => Promise<string>;
+  minimizeToSystemTray: () => Promise<void>;
+  toggleAlwaysOnTop: () => Promise<void>;
+  exitApp: () => Promise<void>;
+  onAuth0Callback: (callback: (hashRoute: string) => void) => void;
+  onDeepLink: (callback: (url: string) => void) => void;
 }
 
 declare global {

@@ -139,7 +139,7 @@ class SemaphoreGuardedLLM:
         # Copy relevant attributes if needed for type hinting or direct access elsewhere
         self.default_request_params = getattr(llm, 'default_request_params', None)
 
-    # --- ADDED: Retry Decorator ---
+    # --- ADDED: Retry Decorator --- 
     # Define the retry strategy: retry on RateLimitError or APITimeoutError, wait exponentially,
     # starting at 2s, max 10s between retries, stop after 3 attempts total.
     @retry(
@@ -161,7 +161,7 @@ class SemaphoreGuardedLLM:
             llm_name = getattr(self._llm, 'name', 'UnknownLLM')
             logger.debug(f"Semaphore acquired for LLM call by {llm_name}")
             try:
-                # --- COMMENTED OUT: Unconditional Proactive Delay ---
+                # --- COMMENTED OUT: Unconditional Proactive Delay --- 
                 # logger.debug(f"Applying 0.5s proactive delay before calling {llm_name}.generate_str")
                 # await asyncio.sleep(0.5)
                 # --- END COMMENTED OUT ---
@@ -180,18 +180,18 @@ class SemaphoreGuardedLLM:
             finally:
                  logger.debug(f"Semaphore released for LLM call by {llm_name}")
             return result
-
-    # --- ADDED: Add generate_structured method ---
+    
+    # --- ADDED: Add generate_structured method --- 
     async def generate_structured(self, *args, **kwargs):
         async with self._semaphore:
             llm_name = getattr(self._llm, 'name', 'UnknownLLM')
             logger.debug(f"Semaphore acquired for structured LLM call by {llm_name}")
             try:
-                # --- COMMENTED OUT: Unconditional Proactive Delay ---
+                # --- COMMENTED OUT: Unconditional Proactive Delay --- 
                 # logger.debug(f"Applying 0.5s proactive delay before calling {llm_name}.generate_structured")
                 # await asyncio.sleep(0.5)
                 # --- END COMMENTED OUT ---
-
+                
                 # Delegate the actual call to the wrapped LLM instance
                 if hasattr(self._llm, 'generate_structured'):
                     # Call helper method which includes tenacity retry logic
@@ -240,7 +240,7 @@ class SemaphoreGuardedLLM:
                  logger.debug(f"Semaphore released for base LLM call by {llm_name}")
             return result
     # --- END ADDED ---
-
+    
     # Add other methods if the orchestrator/router call anything else directly
     # e.g., async def generate(...) # <-- Now handled above
     # Remember to acquire the semaphore in those methods too.
@@ -934,7 +934,7 @@ class CoordinatorAgent:
 
                 # Determine workflow for new query
                 workflow_to_run = decision.get("workflow_type", "router")
-                
+
                 # Wait for files if necessary (Moved after decision, before workflow execution)
                 if files_needing_wait:
                     # ... (existing file waiting logic, call wait_for_files) ...
@@ -987,7 +987,7 @@ class CoordinatorAgent:
             workflow_processor = await self._get_workflow_processor(request.workflow_type)
             response = await workflow_processor(request=request, query_id=query_id, websocket_manager=websocket_manager) # <<< MODIFIED
             
-            # --- Format and Return Result (common) --- 
+            # --- Format and Return Result (common) ---
             final_result = {
                 "query_id": query_id,
                 "result": response.result,
@@ -1897,4 +1897,4 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         self._log_chat_finished(model=model)
 
         return responses
-# --- END ADDED --- 
+    # --- END ADDED ---

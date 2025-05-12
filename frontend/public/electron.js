@@ -1,20 +1,32 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, Tray, Menu, clipboard, dialog, desktopCapturer } = require('electron');
+const fs = require('fs');
 const path = require('path');
-const isDev = require('electron-is-dev');
-const Store = require('electron-store');
+const os = require('os');
+const http = require('http');
+const url = require('url');
+const { createAuthServer } = require('./auth-server');
+const startupLogPath = path.join(os.homedir(), 'denker_electron_startup_log.txt');
+fs.writeFileSync(startupLogPath, `Electron main process (electron.js) started at ${new Date().toISOString()}\n`, { flag: 'a' });
 
-// Load environment variables from .env file when in development
+console.log('🚀 electron.js script started. Timestamp:', Date.now());
+fs.appendFileSync(startupLogPath, `Initial console.log in electron.js executed at ${new Date().toISOString()}\n`);
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, Tray, Menu, clipboard, dialog, desktopCapturer, protocol, shell } = require('electron');
+fs.appendFileSync(startupLogPath, `Electron modules imported at ${new Date().toISOString()}\n`);
+const isDev = process.env.NODE_ENV === 'development';
 if (isDev) {
   require('dotenv').config({ path: path.join(__dirname, '../.env') });
 }
 
 // Initialize store for app settings
+const Store = require('electron-store');
+
+// Initialize store for app settings
 const store = new Store();
 
-// Keep a global reference of the windows
+// Keep a global reference of the windows and servers
 let mainWindow = null;
 let subWindow = null;
 let tray = null;
+let authServer = null;
 
 // Window dimensions and positions
 const MAIN_WINDOW_WIDTH_RATIO = 0.25; // 1/4 of screen width
@@ -39,79 +51,203 @@ const RENDERER_ENV_VARS = {
   VITE_API_URL: API_URL,
   VITE_WS_URL: WS_URL,
   VITE_API_KEY: API_KEY,
-  // Add Auth0 configuration
-  VITE_AUTH0_DOMAIN: process.env.VITE_AUTH0_DOMAIN,
-  VITE_AUTH0_CLIENT_ID: process.env.VITE_AUTH0_CLIENT_ID,
-  VITE_AUTH0_AUDIENCE: process.env.VITE_AUTH0_AUDIENCE,
+  // Add Auth0 configuration with hard-coded fallbacks for production
+  VITE_AUTH0_DOMAIN: process.env.VITE_AUTH0_DOMAIN || 'auth.denker.ai',
+  VITE_AUTH0_CLIENT_ID: process.env.VITE_AUTH0_CLIENT_ID || 'lq6uzeeUp9i14E8FNpJwr0DVIP5VtOzQ',
+  VITE_AUTH0_AUDIENCE: process.env.VITE_AUTH0_AUDIENCE || 'https://api.denker.ai',
   VITE_NODE_ENV: process.env.VITE_NODE_ENV || (isDev ? 'development' : 'production')
 };
+
+console.log('🔧 Environment variables for renderer:', {
+  VITE_AUTH0_DOMAIN: RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN,
+  VITE_AUTH0_CLIENT_ID: RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID ? RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID.substring(0, 8) + '...' : 'MISSING',
+  VITE_AUTH0_AUDIENCE: RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE,
+  VITE_NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV,
+  isDev
+});
 
 // Parse any command line arguments
 let deeplinkingUrl;
 
-// This needs to happen before the app is ready
-// Handle the custom protocol (deep linking)
-if (process.defaultApp) {
-  // In development with Electron default app
-  if (process.argv.length >= 2) {
-    app.setAsDefaultProtocolClient('denker', process.execPath, [path.resolve(process.argv[1])]);
-  }
-} else {
-  // In production
-  app.setAsDefaultProtocolClient('denker');
+console.log('🚀 electron.js: About to attach app.whenReady() handler for main window creation. Timestamp:', Date.now());
+fs.appendFileSync(startupLogPath, `app.whenReady handler attached at ${new Date().toISOString()}\n`);
+app.whenReady().then(() => {
+  fs.appendFileSync(startupLogPath, `app.whenReady resolved at ${new Date().toISOString()}\n`);
+  console.log('🚀 electron.js: app.whenReady() for main window creation has resolved. Timestamp:', Date.now());
+
+  console.log('🚀 electron.js: Calling createMainWindow() from app.whenReady(). Timestamp:', Date.now());
+  setupAuth0Authentication();
+  createMainWindow();
+  registerGlobalShortcut();
+  setupClipboardMonitor();
+  setupAppMenu();
+
+  // --- ADD IPC Handlers for Auth --- 
+  console.log('[*] Registering Auth IPC Handlers...');
+  
+  // Handler for renderer to request access token
+  ipcMain.handle('get-access-token', async () => {
+    const tokens = store.get(AUTH_TOKEN_KEY);
+    if (!tokens || !tokens.accessToken) {
+      console.log('[IPC get-access-token] No access token found.');
+      return null;
 }
+
+    // **TODO: Implement token expiry check and refresh logic here**
+    const expiryTime = tokens.receivedAt + (tokens.expiresIn * 1000);
+    if (Date.now() >= expiryTime) {
+        console.warn('[IPC get-access-token] Access token expired. Need refresh logic.');
+        // Attempt refresh here if refreshToken exists
+        // For now, return null, forcing re-login potentially
+        store.delete(AUTH_TOKEN_KEY); // Clear expired tokens
+        return null;
+    }
+  
+    console.log('[IPC get-access-token] Returning stored access token.');
+    return tokens.accessToken;
+  });
+    
+  // --- ADDED: Handler for renderer to request user info --- 
+  ipcMain.handle('get-user-info', async () => {
+    const tokens = store.get(AUTH_TOKEN_KEY);
+    if (!tokens || !tokens.idToken) {
+      console.log('[IPC get-user-info] No ID token found.');
+      return null;
+    }
+    
+    try {
+      // Simple JWT decode (Payload only, no signature verification)
+      const payloadBase64 = tokens.idToken.split('.')[1];
+      const decodedJson = Buffer.from(payloadBase64, 'base64').toString('utf-8');
+      const payload = JSON.parse(decodedJson);
+    
+      // Extract common profile claims
+      const userInfo = {
+        name: payload.name,
+        nickname: payload.nickname,
+        picture: payload.picture,
+        email: payload.email,
+        email_verified: payload.email_verified,
+        sub: payload.sub // Subject (user ID)
+      };
+  
+      console.log('[IPC get-user-info] Returning user info:', { name: userInfo.name, email: userInfo.email });
+      return userInfo;
+    } catch (error) {
+      console.error('[IPC get-user-info] Error decoding ID token:', error);
+      return null; // Return null if decoding fails
+    }
+  });
+  
+  // Handler for renderer to initiate logout
+  ipcMain.handle('logout', async () => {
+    console.log('🚪 Received logout request from renderer');
+    const tokens = store.get(AUTH_TOKEN_KEY);
+    store.delete(AUTH_TOKEN_KEY); // Clear local tokens immediately
+    console.log('[IPC logout] Local tokens cleared.');
+
+    const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+    const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+    
+    // Determine the correct returnTo URL based on environment
+    const returnTo = isDev 
+      ? 'http://localhost:5173' // Dev returns to Vite server (or wherever your app is)
+      : 'http://localhost:8123/logout-success'; // Packaged app returns to our local auth server's logout page
+
+    console.log(`[IPC logout] Using returnTo URL: ${returnTo}`);
+
+    const logoutUrl = new URL(`https://${auth0Domain}/v2/logout`);
+    logoutUrl.searchParams.append('client_id', clientId);
+    logoutUrl.searchParams.append('returnTo', returnTo); 
+
+    try {
+      console.log(`[IPC logout] Opening external browser for Auth0 logout: ${logoutUrl.toString()}`);
+      await shell.openExternal(logoutUrl.toString());
+      // Notify renderer that logout process started (optional, depends on desired UX)
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('auth-logged-out');
+    }
+      return { success: true };
+  } catch (error) {
+      console.error('❌ Failed to open external browser for logout:', error);
+      return { success: false, error: error.message || 'Failed to start logout process.' };
+    }
+  });
+  
+  // Remove potentially conflicting old handlers if they exist
+  console.log('[*] Cleaning up old IPC Handlers...');
+  ipcMain.removeHandler('send-redirect-callback'); 
+  ipcMain.removeHandler('handle-auth0-callback'); 
+  // Add any others you might have used previously
+  console.log('[*] IPC Handler setup complete.');
+  // --- END Auth IPC Handlers ---
+
+  app.on('activate', function () {
+    console.log('🚀 electron.js: app.on(\'activate\') triggered. Timestamp:', Date.now());
+    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
+  });
+});
+
+// Add IPC handler for Auth0 redirect callback
+ipcMain.handle('send-redirect-callback', (event, appState) => {
+  console.log('🔐 Received Auth0 redirect callback in main process:', appState);
+  
+  // Attempt to show main window if it exists
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    
+    // Send event to renderer to handle navigation
+    mainWindow.webContents.send('auth0-callback', '/callback');
+  } else {
+    console.warn('❌ Main window not available during redirect callback');
+    // Potentially recreate main window if needed
+    createMainWindow();
+  }
+});
 
 // Handle protocol URL (macOS)
 app.on('open-url', (event, url) => {
   event.preventDefault();
-  deeplinkingUrl = url;
-  console.log('Protocol URL detected on macOS:', url);
-  
-  // If the app is already running, send the URL to the main window
+  console.log('🔗 Protocol URL detected on macOS:', url);
+
+  // Keep generic deep link handling if needed for other purposes
   if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('deeplink-url', url);
-    
-    // For Auth0 callback, also strip the protocol part and send as a hash route
-    if (url.includes('callback')) {
-      const hashRoute = '#/callback';
-      mainWindow.webContents.send('auth0-callback', hashRoute);
-      
-      // Also set the window location to the callback route
-      mainWindow.webContents.executeJavaScript(`window.location.hash = '/callback';`);
-    }
-    
-    // Restore the window if minimized
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.focus();
+     console.log('🔗 Forwarding deeplink URL to renderer (macOS):', url);
+     mainWindow.webContents.send('deeplink-url', url);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      mainWindow.show();
+  } else {
+    console.warn('⚠️ mainWindow not available for protocol URL (macOS):', url);
+     // Optionally store the URL if the window might be created later
+     // deeplinkingUrl = url; 
   }
 });
 
 // Windows deep linking handler
 app.on('second-instance', (event, commandLine, workingDirectory) => {
-  console.log('Second instance detected with args:', commandLine);
-  
-  // Someone tried to run a second instance, we should focus our window.
+  console.log('🔄 Second instance detected with args (Windows):', commandLine);
   if (mainWindow) {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
     mainWindow.focus();
-    
-    // Check if there's a URL in the command line (deep linking)
+    mainWindow.show();
+
+    // Check for denker:// protocol URLs (legacy support)
     const deepLinkUrl = commandLine.find(arg => arg.startsWith('denker://'));
     if (deepLinkUrl) {
-      console.log('Protocol URL detected on Windows:', deepLinkUrl);
-      mainWindow.webContents.send('deeplink-url', deepLinkUrl);
+      console.log('⚠️ Received deprecated custom protocol URL (Windows):', deepLinkUrl);
       
-      // For Auth0 callback, also strip the protocol part and send as a hash route
+      // For any 'denker://' URLs, inform the user that we're now using HTTP
       if (deepLinkUrl.includes('callback')) {
-        const hashRoute = '#/callback';
-        mainWindow.webContents.send('auth0-callback', hashRoute);
-        
-        // Also set the window location to the callback route
-        mainWindow.webContents.executeJavaScript(`window.location.hash = '/callback';`);
+        console.log('🔑 Auth0 callback via custom protocol detected - using HTTP server instead');
+        const message = 'Auth0 now uses HTTP for callbacks. Please update your Auth0 settings to use http://localhost:8123/callback';
+        mainWindow.webContents.executeJavaScript(
+          `console.warn("${message}"); alert("${message}");`
+        ).catch(console.error);
+      } else {
+        console.log('🔗 Forwarding non-callback deeplink (Windows):', deepLinkUrl);
+        mainWindow.webContents.send('deeplink-url', deepLinkUrl);
       }
     }
   }
@@ -341,7 +477,7 @@ async function createSubWindowWithData(captureData) {
     // Load the app with subwindow route
     const startUrl = isDev
       ? 'http://localhost:5173/#/subwindow'
-      : `file://${path.join(__dirname, '../build/index.html#/subwindow')}`;
+      : `file://${path.join(__dirname, 'index.html#/subwindow')}`;
     
     console.log('Loading URL:', startUrl);
     
@@ -395,7 +531,7 @@ async function createSubWindowWithData(captureData) {
 
     // Open DevTools in development mode
     if (isDev) {
-      subWindow.webContents.openDevTools({ mode: 'detach' });
+      subWindow.webTools.openDevTools({ mode: 'detach' });
     }
 
     // Handle window close
@@ -444,6 +580,12 @@ function positionSubWindowNearCursor() {
 
 // Create the browser window
 function createMainWindow() {
+  fs.appendFileSync(startupLogPath, `createMainWindow function STARTED at ${new Date().toISOString()}\n`);
+  console.log('🚀 electron.js: createMainWindow() function STARTED. Timestamp:', Date.now());
+  const preloadPath = path.join(__dirname, 'preload.js');
+  console.log(' इलेक्ट्रॉन 🅿️ Preload script absolute path being used:', preloadPath);
+  fs.appendFileSync(startupLogPath, `Preload path determined as: ${preloadPath} at ${new Date().toISOString()}\n`);
+
   mainWindow = new BrowserWindow({
     width: calculateWindowWidth(),
     height: screen.getPrimaryDisplay().workAreaSize.height,
@@ -452,7 +594,7 @@ function createMainWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       additionalArguments: [
         `--api-url=${RENDERER_ENV_VARS.VITE_API_URL}`,
         `--ws-url=${RENDERER_ENV_VARS.VITE_WS_URL}`,
@@ -477,7 +619,7 @@ function createMainWindow() {
   // Load the app
   const startUrl = isDev
     ? 'http://localhost:5173/#/'
-    : `file://${path.join(__dirname, '../build/index.html#/')}`;
+    : `file://${path.join(__dirname, 'index.html#/')}`;
   
   mainWindow.loadURL(startUrl);
 
@@ -538,20 +680,6 @@ function createMainWindow() {
     mainWindow.setAlwaysOnTop(true, 'floating');
   });
 }
-
-// App ready event
-app.whenReady().then(() => {
-  createMainWindow();
-  registerGlobalShortcut();
-  setupClipboardMonitor();
-  // Disable tray icon creation
-  // createTray();
-  setupAppMenu();
-  
-  app.on('activate', function () {
-    if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
-  });
-});
 
 // Clean up before quitting
 app.on('before-quit', () => {
@@ -914,7 +1042,7 @@ function setupAppMenu() {
           click: async () => {
             const { shell } = require('electron');
             await shell.openExternal('https://denker.ai');
-          }
+  }
         }
       ]
     }
@@ -923,3 +1051,460 @@ function setupAppMenu() {
   const menu = Menu.buildFromTemplate(template);
   Menu.setApplicationMenu(menu);
 } 
+
+// Global variable to track whether authentication is in progress
+let authenticationInProgress = false;
+
+/**
+ * Starts the Auth0 callback HTTP server in production mode
+ * Following Auth0 best practices for desktop applications
+ */
+function startAuthServer() {
+  if (authServer) {
+    console.log('⚠️ Auth server already running');
+    return;
+  }
+  
+  console.log('🔒 Starting Auth0 callback server for production mode');
+  
+  // Create the auth server
+  authServer = createAuthServer({
+    port: 8123,
+    onCallback: handleAuth0Callback
+  });
+  
+  // Handle server errors
+  authServer.on('error', (err) => {
+    console.error('❌ Auth server error:', err);
+    authServer = null;
+  });
+}
+
+/**
+ * Handle Auth0 callback data received from the local HTTP server
+ * Following best practices for Electron Auth0 integration
+ */
+function handleAuth0Callback(params) {
+  console.log('🔑 Auth0 callback received from system browser:', { 
+    hasCode: !!params.code,
+    hasState: !!params.state,
+  });
+  
+  // Verify Auth0 state parameter (keep this active)
+  if (global.auth0State && params.state !== global.auth0State) {
+    console.error('⚠️ Auth0 state mismatch - potential CSRF attack. Aborting callback processing.');
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('auth0-login-error', 'State mismatch error. Please try logging in again.');
+    }
+    return; // Stop processing if state doesn't match
+  }
+  
+  // Clear used state
+  global.auth0State = null;
+  console.log('✅ Main process state validation passed.');
+  
+  ensureMainWindow(() => {
+    if (!mainWindow || !mainWindow.webContents || mainWindow.isDestroyed()) {
+      console.error('❌ Cannot send auth callback data - no valid main window available');
+      return;
+    }
+
+    // Instead of navigating with loadURL, send code/state via IPC
+    console.log('[AUTH_DEBUG] electron.js: Sending auth0-callback-data IPC to renderer.');
+    mainWindow.webContents.send('auth0-callback-data', { 
+      code: params.code, 
+      state: params.state 
+    });
+
+    // Focus the window after sending IPC
+    focusMainWindow(); 
+  });
+}
+
+/**
+ * Make sure the main window exists and is ready
+ * Enhanced to handle various window states more reliably
+ */
+function ensureMainWindow(callback) {
+  // Check for all possible window states
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    console.log('📢 Creating new main window for auth callback');
+    // Pass the callback to createMainWindow if it supports it,
+    // otherwise, rely on app.whenReady or similar event
+    createMainWindow(() => { // Assuming createMainWindow can take a callback or sets up listeners
+       setTimeout(() => { // Add delay to ensure window is fully ready
+         if (mainWindow && !mainWindow.isDestroyed()) {
+            focusMainWindow();
+            callback();
+         } else {
+            console.error("Failed to create/ensure main window for callback.")
+         }
+       }, 1000); // Adjust delay if needed
+    });
+
+  } else {
+     // Window exists, ensure it's visible and focused
+     console.log('📢 Main window exists, ensuring visibility for auth callback');
+     focusMainWindow(); // Use existing focus logic
+
+     // Execute the callback after a short delay, only if it's a valid function
+     if (typeof callback === 'function') {
+        setTimeout(callback, 200);
+     } else {
+        console.warn('[ensureMainWindow] No valid callback provided to execute after focusing window.')
+     }
+  }
+}
+
+/**
+ * Focuses the main window and brings it to the front.
+ */
+function focusMainWindow() {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        console.log('✨ Focusing main window');
+        if (mainWindow.isMinimized()) {
+            mainWindow.restore();
+        }
+        mainWindow.show(); // Ensure it's visible
+        mainWindow.focus(); // Focus the window
+        
+        // Optional: Bring to front with always-on-top temporarily
+        mainWindow.setAlwaysOnTop(true);
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(false);
+        }, 1000);
+        
+        // For macOS, bring app to foreground
+        if (process.platform === 'darwin') {
+          app.show();
+          app.focus({ steal: true }); // steal focus if needed
+        }
+    } else {
+        console.warn('⚠️ Tried to focus main window, but it doesn\'t exist or is destroyed.');
+    }
+}
+
+// ... existing code ...
+
+function forwardAuthDataToRenderer(params) { // This function seems unused or part of an old flow, consider removing if confirm unused.
+  console.log('📡 Forwarding auth data to renderer:', params);
+
+  if (mainWindow && mainWindow.webContents) {
+    // Ensure main window is visible and focused
+  mainWindow.show();
+  mainWindow.focus();
+    
+    // Send the Auth0 parameters to the renderer
+    mainWindow.webContents.send('auth0-params', params);
+  } else {
+    console.error('❌ Cannot forward auth data - main window not available');
+  }
+}
+
+// Key for storing auth tokens in electron-store
+const AUTH_TOKEN_KEY = 'authTokens';
+
+// Define setupAuth0Authentication function (was missing)
+function setupAuth0Authentication() {
+  console.log('🔐 Setting up Auth0 authentication listeners...');
+  
+  // Start the HTTP callback server in production for backward compatibility / handling callback
+  // (Even if token exchange is in main, server receives initial code/state)
+  if (!isDev) {
+    startAuthServer(); 
+  }
+  
+  // Register IPC listener for renderer to trigger system browser login
+  ipcMain.on('auth0-login-request', (event) => {
+    console.log('🔓 Received auth0-login-request from renderer');
+    openSystemBrowserForAuth(); // Call the function to open browser with PKCE
+  });
+  console.log('🔐 Auth0 login request listener ready.');
+    
+  // --- ADDED: Handler for renderer to request logout --- 
+  ipcMain.handle('logout', async () => {
+    console.log('🚪 Received logout request from renderer');
+    const tokens = store.get(AUTH_TOKEN_KEY);
+    store.delete(AUTH_TOKEN_KEY); // Clear local tokens immediately
+    console.log('[IPC logout] Local tokens cleared.');
+
+    const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+    const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+    
+    // Determine the correct returnTo URL based on environment
+    const returnTo = isDev 
+      ? 'http://localhost:5173' // Dev returns to Vite server (or wherever your app is)
+      : 'http://localhost:8123/logout-success'; // Packaged app returns to our local auth server's logout page
+
+    console.log(`[IPC logout] Using returnTo URL: ${returnTo}`);
+
+    const logoutUrl = new URL(`https://${auth0Domain}/v2/logout`);
+    logoutUrl.searchParams.append('client_id', clientId);
+    logoutUrl.searchParams.append('returnTo', returnTo); 
+
+    try {
+      console.log(`[IPC logout] Opening external browser for Auth0 logout: ${logoutUrl.toString()}`);
+      await shell.openExternal(logoutUrl.toString());
+      // Notify renderer that logout process started (optional, depends on desired UX)
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('auth-logged-out');
+      }
+      return { success: true };
+    } catch (error) {
+      console.error('❌ Failed to open external browser for logout:', error);
+      return { success: false, error: error.message || 'Failed to start logout process.' };
+      }
+  });
+  console.log('🔐 Auth0 logout request listener (\'logout\') ready.');
+    
+  // --- ADDED: Handler for renderer to request access token ---
+  ipcMain.handle('get-access-token', async () => { // Make async for potential refresh logic
+    const tokens = store.get(AUTH_TOKEN_KEY);
+    if (!tokens || !tokens.accessToken) {
+      console.log('[IPC get-access-token] No access token found.');
+      return null;
+    }
+  
+    // **TODO: Implement token expiry check and refresh logic here**
+    const expiryTime = tokens.receivedAt + (tokens.expiresIn * 1000);
+    if (Date.now() >= expiryTime) {
+        console.warn('[IPC get-access-token] Access token expired. Need refresh logic.');
+        // Attempt refresh here if refreshToken exists
+        // For now, return null, forcing re-login potentially
+        store.delete(AUTH_TOKEN_KEY); // Clear expired tokens
+        return null;
+    }
+  
+    console.log('[IPC get-access-token] Returning stored access token.');
+    return tokens.accessToken;
+  });
+}
+
+const crypto = require('crypto'); // Add crypto for PKCE
+
+// Helper function for PKCE: Base64 URL encoding
+function base64URLEncode(str) {
+  return str.toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=/g, '');
+      }
+      
+// Helper function for PKCE: SHA256 hashing
+function sha256(buffer) {
+  return crypto.createHash('sha256').update(buffer).digest();
+}
+
+// Global variable to store PKCE verifier and state temporarily
+let pkceVerifier = null;
+let authState = null; // Renamed from global.auth0State for clarity
+
+/**
+ * Handle Auth0 callback data received from the system browser via the local HTTP server
+ * Performs PKCE token exchange directly in the main process.
+ */
+async function handleAuth0Callback(params) { // Make async
+  console.log('🔑 Auth0 callback received from system browser:', { 
+    hasCode: !!params.code,
+    hasState: !!params.state,
+  });
+
+  // --- 1. Verify State ---
+  if (!authState || params.state !== authState) {
+    console.error('❌ Auth0 state mismatch! Expected:', authState, 'Received:', params.state);
+    authState = null; // Clear potentially compromised state
+    pkceVerifier = null; // Clear verifier too
+     if (mainWindow && mainWindow.webContents) {
+       // Send specific error to renderer
+       mainWindow.webContents.send('auth-failed', 'Authentication error: Invalid state. Please try logging in again.');
+     }
+    return; // Stop processing
+  }
+  console.log('✅ State verified.');
+  const receivedState = authState; // Keep a copy before clearing
+  authState = null; // Clear used state immediately
+
+  // --- 2. Check for Errors from Auth0 ---
+  if (params.error) {
+      console.error('❌ Error received from Auth0 during callback:', params.error, params.error_description);
+      pkceVerifier = null; // Clear verifier
+      if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('auth-failed', `Authentication error: ${params.error_description || params.error}`);
+      }
+    return;
+  }
+  
+  // --- 3. Ensure Code and Verifier Exist ---
+  if (!params.code) {
+      console.error('❌ Auth0 callback missing authorization code.');
+      pkceVerifier = null; // Clear verifier
+      if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('auth-failed', 'Authentication error: Missing authorization code.');
+      }
+      return;
+  }
+  if (!pkceVerifier) {
+      console.error('❌ PKCE code_verifier missing. Cannot exchange code.');
+      // State was already cleared
+      if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('auth-failed', 'Internal authentication error: Missing PKCE verifier. Please try again.');
+      }
+      return;
+  }
+  console.log('✅ Code received and PKCE verifier found.');
+  const code = params.code;
+  const verifier = pkceVerifier; // Keep a copy before clearing
+  pkceVerifier = null; // Clear used verifier
+
+  // --- 4. Exchange Code for Tokens ---
+  const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+  const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+  const redirectUri = isDev ? 'http://localhost:5173/callback' : 'http://localhost:8123/callback'; // Use the correct URI for the server
+
+  const tokenUrl = `https://${auth0Domain}/oauth/token`;
+  const tokenParams = new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      code: code,
+      code_verifier: verifier,
+      redirect_uri: redirectUri,
+  });
+
+  console.log(`[AUTH] Exchanging code for token at ${tokenUrl} with client_id: ${clientId.substring(0,5)}...`);
+
+  try {
+      const response = await fetch(tokenUrl, {
+          method: 'POST',
+          headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: tokenParams,
+      });
+
+      const tokens = await response.json();
+
+      if (!response.ok) {
+          console.error('❌ Error exchanging code for tokens:', tokens);
+          if (mainWindow && mainWindow.webContents) {
+              mainWindow.webContents.send('auth-failed', `Token exchange failed: ${tokens.error_description || tokens.error || response.statusText}`);
+          }
+    return;
+  }
+  
+      console.log('✅ Tokens received successfully:', { hasAccessToken: !!tokens.access_token, hasIdToken: !!tokens.id_token, expiresIn: tokens.expires_in });
+
+      // --- 5. Store Tokens Securely ---
+      const tokenDataToStore = {
+          accessToken: tokens.access_token,
+          idToken: tokens.id_token, // Useful for user info
+          refreshToken: tokens.refresh_token, // Important for refreshing later
+          expiresIn: tokens.expires_in, // In seconds
+          scope: tokens.scope,
+          receivedAt: Date.now() // Store timestamp for expiry calculation
+      };
+      store.set(AUTH_TOKEN_KEY, tokenDataToStore);
+      console.log('[AUTH] Tokens stored securely.');
+
+      // --- 6. Notify Renderer of Success ---
+      ensureMainWindow(() => { // Ensure window exists before sending IPC
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+              console.log('[AUTH] Sending auth-successful IPC to renderer.');
+              mainWindow.webContents.send('auth-successful');
+              focusMainWindow(); // Bring window to front
+          } else {
+               console.error('[AUTH] Cannot send auth-successful IPC - no valid main window.');
+          }
+      });
+
+  } catch (error) {
+      console.error('❌ Network or unexpected error during token exchange:', error);
+      if (mainWindow && mainWindow.webContents) {
+          mainWindow.webContents.send('auth-failed', 'Network error during authentication. Please check your connection and try again.');
+      }
+  }
+}
+
+/**
+ * Opens the system's default web browser to the Auth0 /authorize endpoint.
+ * Generates PKCE code challenge and state parameter.
+ */
+function openSystemBrowserForAuth() {
+  console.log('[AUTH] Initiating login flow...');
+
+  // Generate PKCE verifier and challenge
+  pkceVerifier = base64URLEncode(crypto.randomBytes(32));
+  const pkceChallenge = base64URLEncode(sha256(pkceVerifier));
+  const codeChallengeMethod = 'S256';
+
+  // Generate state
+  authState = base64URLEncode(crypto.randomBytes(32)); // Store globally for callback verification
+
+  console.log('[AUTH] Generated PKCE Challenge and State.');
+
+  const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+  const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+  const audience = RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE;
+  // IMPORTANT: Redirect URI MUST match what's configured in Auth0 AND where your server listens
+  const redirectUri = isDev 
+    ? 'http://localhost:5173/callback' // Dev server handles callback directly
+    : 'http://localhost:8123/callback'; // Production uses dedicated server
+
+  // Define scopes - openid, profile, email are standard, offline_access for refresh token
+  const scope = 'openid profile email offline_access'; 
+
+  const authorizeUrl = new URL(`https://${auth0Domain}/authorize`);
+  authorizeUrl.searchParams.append('response_type', 'code');
+  authorizeUrl.searchParams.append('client_id', clientId);
+  authorizeUrl.searchParams.append('redirect_uri', redirectUri);
+  authorizeUrl.searchParams.append('scope', scope);
+  authorizeUrl.searchParams.append('state', authState);
+  authorizeUrl.searchParams.append('code_challenge', pkceChallenge);
+  authorizeUrl.searchParams.append('code_challenge_method', codeChallengeMethod);
+  if (audience) {
+    authorizeUrl.searchParams.append('audience', audience);
+      }
+
+  console.log(`[AUTH] Opening system browser to: https://${auth0Domain}/authorize?... (URL Params logged below)`);
+  console.log('[AUTH] URL Params:', { clientId: clientId.substring(0,5)+'...', redirectUri, scope, state: '***', code_challenge: '***', code_challenge_method: codeChallengeMethod, audience });
+    
+  // Open the URL in the system browser
+  shell.openExternal(authorizeUrl.toString()).catch(err => {
+     console.error("❌ Failed to open external browser:", err);
+     // Notify renderer of the failure if possible
+     if (mainWindow && mainWindow.webContents) {
+       mainWindow.webContents.send('auth-failed', 'Failed to open the login page in your browser.');
+     }
+  });
+}
+
+// Define setupAuth0Authentication function 
+function setupAuth0Authentication() {
+  console.log('🔐 Setting up Auth0 authentication listeners...');
+  
+  // Start the HTTP callback server ONLY IN PRODUCTION
+  // In Dev, Vite's server or direct redirects might be used
+  if (!isDev) {
+    console.log("[AUTH Setup] Starting HTTP callback server for Production.")
+    startAuthServer(); 
+  } else {
+    console.log("[AUTH Setup] Skipping HTTP callback server start in Development.")
+  }
+  
+  // Register IPC listener for renderer to trigger system browser login
+  // ** RENAMED from 'auth0-login-request' to 'login' **
+  ipcMain.handle('login', async () => { // Changed to handle, can be async if needed
+    console.log('🔓 Received login request from renderer');
+    try {
+      openSystemBrowserForAuth(); // Call the function to open browser with PKCE
+      return { success: true }; // Indicate the process started
+    } catch (error) {
+       console.error("❌ Error initiating login:", error);
+       return { success: false, error: error.message || 'Failed to start login process.' };
+    }
+  });
+  console.log('🔐 Auth0 login request listener (\'login\') ready.');
+
+  // Add listener for Auth0 callback data (from old flow, should be removed or adapted)
+  // ipcMain.on('auth0-callback-data', (event, data) => { ... }); // KEEPING THIS COMMENTED FOR NOW
+  // Instead, handleAuth0Callback is called directly by the HTTP server
+}

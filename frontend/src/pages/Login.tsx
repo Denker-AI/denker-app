@@ -1,121 +1,157 @@
-import React from 'react';
-import { useAuth0 } from '@auth0/auth0-react';
-import { Navigate } from 'react-router-dom';
+import React, { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext'; // Import the custom hook
 import {
   Box,
   Button,
+  CircularProgress,
   Typography,
-  Container,
   Paper,
-  useTheme,
+  Alert,
+  AppBar,
+  Toolbar,
+  IconButton,
 } from '@mui/material';
-import LockOutlinedIcon from '@mui/icons-material/LockOutlined';
-import LoginNavBar from '../components/Auth/LoginNavBar';
+import { useTheme } from '@mui/material/styles';
+import CloseIcon from '@mui/icons-material/Close';
+import RefreshIcon from '@mui/icons-material/Refresh';
+
+// No need to redefine the Window interface - we'll use type assertions instead
+
+// Check if running in Electron
+const isElectron = window.navigator.userAgent.toLowerCase().indexOf('electron') > -1;
 
 const Login: React.FC = () => {
-  const { isAuthenticated, loginWithRedirect, isLoading } = useAuth0();
+  // Use our custom hook instead of useAuth0
+  const { login, isLoading, isAuthenticated, error } = useAuth();
+  const navigate = useNavigate();
   const theme = useTheme();
-
+  
   // Redirect if already authenticated
-  if (isAuthenticated && !isLoading) {
-    return <Navigate to="/" replace />;
-  }
+  useEffect(() => {
+    if (!isLoading && isAuthenticated) {
+      console.log('[Login Page] Already authenticated, redirecting to /');
+      navigate('/'); // Navigate to the main app route
+    }
+  }, [isLoading, isAuthenticated, navigate]);
 
-  // Handle retry login
-  const handleRetryLogin = () => {
-    loginWithRedirect();
+  const handleLogin = () => {
+    login(); // Call the login function from our context
+  };
+
+  const handleClose = () => {
+    console.log('Close button clicked');
+    if (isElectron) {
+      // In Electron, minimize might be safer than close, depending on main process setup
+      (window as any).electron?.minimizeMainWindow?.(); 
+    } else {
+      // Standard web behavior (might not be applicable if always in Electron)
+      window.close(); 
+    }
+  };
+
+  const handleReload = () => {
+    console.log('Reload button clicked');
+    window.location.reload();
   };
 
   return (
-    <Box 
-      className="login-container" // Add a specific class for debugging
-      sx={{ 
-        display: 'flex', 
-        flexDirection: 'column', 
-        height: '100vh', 
-        width: '100%',
-        margin: 0,
-        padding: 0,
-        overflow: 'hidden',
-        backgroundColor: theme.palette.background.default,
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        zIndex: 9999, // Ensure it appears above other content
-      }}
-    >
-      {/* Login navbar */}
-      <LoginNavBar onReload={handleRetryLogin} />
-      
-      {/* Login content */}
-      <Container component="main" maxWidth="xs" sx={{ 
-        flexGrow: 1, 
-        display: 'flex', 
-        alignItems: 'center',
-        justifyContent: 'center',
-        py: 3,
-      }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      <AppBar 
+        position="static" 
+        color="default" 
+        elevation={1}
+        sx={{ 
+          // Make the AppBar draggable, common for frameless Electron windows
+          WebkitAppRegion: 'drag', 
+          userSelect: 'none', // Prevent text selection on the draggable region
+        }}
+      >
+        <Toolbar variant="dense" sx={{ justifyContent: 'space-between' /* Change alignment */ }}>
+          <Box sx={{ 
+            // This box will contain buttons, make it non-draggable
+            WebkitAppRegion: 'no-drag',
+            display: 'flex',
+            alignItems: 'center',
+            // Removed fixed width spacer
+          }}>
+            <IconButton edge="start" color="inherit" aria-label="reload" onClick={handleReload} sx={{ mr: 1 }}>
+              <RefreshIcon />
+            </IconButton>
+            <IconButton edge="start" color="inherit" aria-label="close" onClick={handleClose}>
+              <CloseIcon />
+            </IconButton>
+          </Box>
+          <Typography variant="subtitle1" sx={{ position: 'absolute', left: '50%', transform: 'translateX(-50%)', WebkitAppRegion: 'no-drag' /* Title text itself should not drag */ }}>
+            Denker Login
+          </Typography>
+          {/* Empty Box to balance the toolbar for space-between */}
+          <Box /> 
+        </Toolbar>
+      </AppBar>
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: theme.palette.background.default,
+          p: 3,
+        }}
+      >
         <Paper
           elevation={3}
-          className="glass"
           sx={{
             p: 4,
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
+            maxWidth: 400,
             width: '100%',
-            backgroundColor: 'rgba(30, 30, 30, 0.6)',
-            backdropFilter: 'blur(10px)',
-            borderRadius: 2,
           }}
         >
-          <Box
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              mb: 3,
-            }}
-          >
-            <Box
-              sx={{
-                bgcolor: 'primary.main',
-                borderRadius: '50%',
-                p: 1,
-                mb: 2,
-                display: 'flex',
-                justifyContent: 'center',
-                alignItems: 'center',
-              }}
-            >
-              <LockOutlinedIcon fontSize="large" />
-            </Box>
-            <Typography component="h1" variant="h5">
-              Welcome to Denker AI
-            </Typography>
-            <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
-              Your AI-powered Knowledge Partner
-            </Typography>
-          </Box>
-
-          <Button
-            fullWidth
-            variant="contained"
-            color="primary"
-            size="large"
-            onClick={() => loginWithRedirect()}
-            sx={{ mt: 2, mb: 2 }}
-            className="non-draggable"
-            disabled={isLoading}
-          >
-            {isLoading ? 'Signing In...' : 'Sign In'}
-          </Button>
-          
-          <Typography variant="body2" color="text.secondary" align="center">
-            Powered by Auth0
+          <Typography variant="h5" component="h1" gutterBottom align="center">
+            Welcome to Denker
           </Typography>
+          
+          {error && (
+            <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
+              Login Failed: {error}
+            </Alert>
+          )}
+          
+          <Box sx={{ mt: 2, width: '100%', textAlign: 'center' }}>
+            {isLoading ? (
+              <>
+                <CircularProgress sx={{ mb: 1 }}/>
+                <Typography variant="body2" color="text.secondary">
+                  {error ? 'Retrying...' : 'Processing Login...'} 
+                </Typography>
+              </>
+            ) : (
+              <Button
+                variant="contained"
+                color="primary"
+                size="large"
+                fullWidth
+                onClick={handleLogin}
+                disabled={isLoading}
+              >
+                Log In / Sign Up
+              </Button>
+            )}
+          </Box>
+          
+          {!isLoading && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 3, textAlign: 'center' }}>
+              Click the button to securely log in or sign up via your browser.
+            </Typography>
+          )}
+          
         </Paper>
-      </Container>
+      </Box>
     </Box>
   );
 };

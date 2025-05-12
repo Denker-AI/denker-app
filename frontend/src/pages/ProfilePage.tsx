@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Box,
   Typography,
@@ -11,14 +11,16 @@ import {
   Grid,
   useTheme,
   CircularProgress,
+  Alert,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EditIcon from '@mui/icons-material/Edit';
 import LogoutIcon from '@mui/icons-material/Logout';
 import { useNavigate } from 'react-router-dom';
 
-// Hooks
-import useUser from '../hooks/useUser';
+// REMOVE custom hook
+// import useUser from '../hooks/useUser'; 
+import { useAuth } from '../auth/AuthContext'; // CORRECTED PATH: Changed ../../ to ../
 
 // Utils
 import { stringToColor } from '../utils/helpers';
@@ -26,17 +28,28 @@ import { stringToColor } from '../utils/helpers';
 const ProfilePage: React.FC = () => {
   const theme = useTheme();
   const navigate = useNavigate();
-  const { profile, updateUserProfile, isLoading, logout } = useUser();
+  // const { profile, updateUserProfile, isLoading, logout } = useUser(); // REMOVED
+  const { user, logout, isLoading } = useAuth(); // ADDED: Get user and logout from context
   
-  // Local state for form values
+  // Local state for form values (keep for potential future editing)
   const [formValues, setFormValues] = useState({
-    name: profile?.name || '',
-    email: profile?.email || '',
+    name: user?.name || '',
+    email: user?.email || '',
   });
   
+  // Keep track of initial load from context
+  useEffect(() => {
+    if (user) {
+      setFormValues({
+        name: user.name || '',
+        email: user.email || '',
+      });
+    }
+  }, [user]); // Update form if user object changes
+
+  // Editing is disabled for now as update logic is removed
   const [isEditing, setIsEditing] = useState(false);
   
-  // Handle form changes
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFormValues({
       ...formValues,
@@ -44,25 +57,17 @@ const ProfilePage: React.FC = () => {
     });
   };
   
-  // Toggle edit mode
+  // Disable editing toggle for now
   const handleToggleEdit = () => {
-    setIsEditing(!isEditing);
-    
-    // Reset form values when canceling edit
-    if (isEditing) {
-      setFormValues({
-        name: profile?.name || '',
-        email: profile?.email || '',
-      });
-    }
+    // setIsEditing(!isEditing);
+    console.log('Profile editing is currently disabled.'); 
   };
   
-  // Save profile
+  // Disable save functionality for now
   const handleSave = async () => {
-    await updateUserProfile({
-      name: formValues.name,
-    });
-    setIsEditing(false);
+    // await updateUserProfile({ name: formValues.name });
+    // setIsEditing(false);
+    console.log('Profile saving is currently disabled.');
   };
   
   // Go back to main window
@@ -70,16 +75,15 @@ const ProfilePage: React.FC = () => {
     navigate('/');
   };
   
-  // Handle logout
+  // Handle logout (uses logout from useAuth)
   const handleLogout = () => {
     logout();
   };
   
-  // Use a neutral color for avatar instead of generating one based on name
-  const avatarColor = theme.palette.grey[700]; // Neutral dark grey color
+  const avatarColor = theme.palette.grey[700];
   
-  // Get initials for avatar
-  const getInitials = (name: string) => {
+  const getInitials = (name?: string) => {
+    if (!name) return '?';
     return name
       .split(' ')
       .map((part) => part[0])
@@ -88,7 +92,8 @@ const ProfilePage: React.FC = () => {
       .substring(0, 2);
   };
   
-  if (!profile) {
+  // Use isLoading from useAuth for initial loading state
+  if (isLoading && !user) { 
     return (
       <Box
         sx={{
@@ -101,6 +106,15 @@ const ProfilePage: React.FC = () => {
         <CircularProgress />
       </Box>
     );
+  }
+
+  // Handle case where user is still null after loading (shouldn't happen if route is protected)
+  if (!user) {
+     return (
+      <Box sx={{ p: 3 }}>
+         <Alert severity="error">Could not load user profile.</Alert>
+      </Box>
+     );
   }
   
   return (
@@ -117,12 +131,12 @@ const ProfilePage: React.FC = () => {
     >
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, justifyContent: 'space-between' }}>
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
-          <IconButton onClick={handleBack} sx={{ mr: 2 }}>
-            <ArrowBackIcon />
-          </IconButton>
-          <Typography variant="h5" component="h1">
-            Profile
-          </Typography>
+        <IconButton onClick={handleBack} sx={{ mr: 2 }}>
+          <ArrowBackIcon />
+        </IconButton>
+        <Typography variant="h5" component="h1">
+          Profile
+        </Typography>
         </Box>
         
         <Button
@@ -149,7 +163,7 @@ const ProfilePage: React.FC = () => {
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
           <Avatar
-            src={profile.picture}
+            src={user.picture} // Use user.picture from context
             sx={{
               width: 100,
               height: 100,
@@ -158,15 +172,16 @@ const ProfilePage: React.FC = () => {
               fontSize: '2rem',
             }}
           >
-            {!profile.picture && getInitials(profile.name)}
+            {/* Use user.name for initials, handle undefined case */}
+            {!user.picture && getInitials(user.name)}
           </Avatar>
           
           <Typography variant="h6" gutterBottom>
-            {profile.name}
+            {user.name || 'N/A'} {/* Use user.name */} 
           </Typography>
           
           <Typography variant="body2" color="text.secondary">
-            {profile.email}
+            {user.email || 'N/A'} {/* Use user.email */}
           </Typography>
         </Box>
         
@@ -179,7 +194,8 @@ const ProfilePage: React.FC = () => {
                 Personal Information
               </Typography>
               
-              <IconButton onClick={handleToggleEdit} color={isEditing ? 'primary' : 'default'}>
+              {/* Disable Edit button for now */}
+              <IconButton onClick={handleToggleEdit} color={isEditing ? 'primary' : 'default'} disabled>
                 <EditIcon />
               </IconButton>
             </Box>
@@ -191,9 +207,9 @@ const ProfilePage: React.FC = () => {
                 id="name"
                 label="Name"
                 name="name"
-                value={formValues.name}
+                value={formValues.name} // Use local state derived from user.name
                 onChange={handleChange}
-                disabled={!isEditing}
+                disabled={!isEditing} // Still controlled by isEditing state
                 variant="outlined"
                 size="small"
               />
@@ -204,31 +220,23 @@ const ProfilePage: React.FC = () => {
                 id="email"
                 label="Email"
                 name="email"
-                value={formValues.email}
-                disabled={true} // Email is managed by Auth0
+                value={formValues.email} // Use local state derived from user.email
+                disabled // Email usually not editable
                 variant="outlined"
                 size="small"
-                helperText="Email is managed by your authentication provider"
               />
               
               {isEditing && (
-                <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
-                  <Button
-                    variant="outlined"
-                    onClick={handleToggleEdit}
-                    sx={{ mr: 2 }}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handleSave}
-                    disabled={isLoading}
-                  >
-                    Save Changes
-                  </Button>
-                </Box>
+                <Button
+                  type="button" // Changed from submit to button as we use handleSave
+                  variant="contained"
+                  color="primary"
+                  sx={{ mt: 3, mb: 2 }}
+                  onClick={handleSave}
+                  disabled // Disable save button for now
+                >
+                  Save Changes
+                </Button>
               )}
             </Box>
           </Grid>
@@ -240,7 +248,7 @@ const ProfilePage: React.FC = () => {
             
             <Box sx={{ mt: 2 }}>
               <Typography variant="body2" gutterBottom>
-                <strong>Account ID:</strong> {profile.id}
+                <strong>Account ID:</strong> {user.id}
               </Typography>
               
               <Typography variant="body2" gutterBottom>

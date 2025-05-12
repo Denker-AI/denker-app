@@ -11,7 +11,6 @@ import {
 import MenuIcon from '@mui/icons-material/Menu';
 import CloseIcon from '@mui/icons-material/Close';
 import AddIcon from '@mui/icons-material/Add';
-import { useAuth0 } from '@auth0/auth0-react';
 
 interface NavBarProps {
   onToggleSideMenu: () => void;
@@ -25,7 +24,6 @@ interface NavBarProps {
  * Provides app title, window controls, and toggle for the side menu
  */
 const NavBarNew: React.FC<NavBarProps> = ({ onToggleSideMenu, title, onCreateNewConversation }) => {
-  const { user } = useAuth0();
   const theme = useTheme();
   const [addHover, setAddHover] = useState(false);
   const [menuHover, setMenuHover] = useState(false);

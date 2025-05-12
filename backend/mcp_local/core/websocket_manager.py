@@ -353,7 +353,7 @@ class WebSocketManager:
     ):
         """
         Send a structured update message to a specific client via WebSocket.
-
+        
         Args:
             query_id: The query ID of the client to send the message to.
             update_type: The category of the update (e.g., 'status', 'step', 'result', 'error', 'clarification').
@@ -392,7 +392,7 @@ class WebSocketManager:
             "message": message,
             "data": data if data is not None else {},
         }
-
+        
         # <<< ADDED: Log the payload being sent >>>
         self.logger.info(f"📤 Sending WebSocket message to {query_id} (Type: {full_payload.get('update_type', 'MISSING')}, Workflow: {workflow_type or 'N/A'}) - Payload Summary: {str(full_payload)[:200]}...")
         # <<< END ADDED >>>

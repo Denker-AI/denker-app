@@ -59,7 +59,7 @@ import { format } from 'date-fns';
 
 // Hooks
 import { useMainWindowHooks } from '../../hooks';
-import { useUser } from '../../hooks';
+import { useAuth } from '../../auth/AuthContext';
 
 // Types
 import { Conversation } from '../../types/conversation';
@@ -76,7 +76,7 @@ interface SideMenuProps {
  */
 const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, navbarHeight }) => {
   const theme = useTheme();
-  const user = useUser();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
   
@@ -713,29 +713,30 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
               alignItems: 'center',
               p: 2,
               borderBottom: `1px solid ${theme.palette.divider}`,
+              cursor: 'pointer',
+              '&:hover': {
+                backgroundColor: theme.palette.action.hover
+              }
             }}
+            onClick={handleOpenProfilePage}
           >
             <Avatar
-              src={user.profile?.picture || ''}
-              alt={user.profile?.name || 'User'}
+              src={user?.picture}
+              alt={user?.name || 'User'}
               sx={{ 
-                width: 48, 
-                height: 48, 
-                cursor: 'pointer',
-                mr: 2,
+                width: 40,
+                height: 40, 
+                mr: 1.5,
                 bgcolor: theme.palette.grey[700],
-                '&:hover': {
-                  opacity: 0.8,
-                }
+                fontSize: '1rem'
               }}
-              onClick={handleOpenProfilePage}
             />
-            <Box>
-              <Typography variant="subtitle1" fontWeight="bold" noWrap>
-                {user.profile?.name || 'User'}
+            <Box sx={{ overflow: 'hidden' }}>
+              <Typography variant="subtitle2" fontWeight="medium" noWrap>
+                {user?.name || 'User'}
               </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {user.profile?.email || ''}
+              <Typography variant="caption" color="text.secondary" noWrap>
+                {user?.email || ''}
               </Typography>
             </Box>
 

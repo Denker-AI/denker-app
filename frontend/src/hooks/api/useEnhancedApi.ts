@@ -1,5 +1,5 @@
 import { useMemo, useCallback } from 'react';
-import { useApi } from '../../services/api';
+import api from '../../services/api';
 import { useRetryLogic } from './useRetryLogic';
 import { useApiStatus, ApiStatus } from './useApiStatus';
 import axios, { AxiosError } from 'axios';
@@ -23,9 +23,6 @@ export enum NetworkErrorType {
  * to the base API service.
  */
 export const useEnhancedApi = () => {
-  // Get the base API service
-  const api = useApi();
-  
   // Get retry logic
   const { executeWithRetry } = useRetryLogic();
   

@@ -1,12 +1,12 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { HashRouter } from 'react-router-dom';
-import { Auth0Provider } from '@auth0/auth0-react';
 import { ThemeProvider, CssBaseline } from '@mui/material';
 import App from './App';
 import theme from './theme';
 import './index.css';
 import initBrowserActionHandler from './utils/browserActionHandler';
+import { AuthProvider } from './auth/AuthContext';
 
 // Initialize global handlers
 initBrowserActionHandler();
@@ -36,200 +36,63 @@ window.addEventListener('error', (event) => {
   }
 });
 
-// Check if running in Electron
-const isElectron = window.electron !== undefined;
+console.log('🚀 Renderer process started. Timestamp:', Date.now());
+console.log('  Initial window.electron type:', typeof window.electron);
+// Check for the flag set by preload.js. `window as any` is used because the property is dynamically added.
+console.log('  Initial window.electronIsPreloadedByScript:', (window as any).electronIsPreloadedByScript);
 
-// Listen for Auth0 callback events from Electron main process
-if (isElectron && window.electron) {
-  // Listen for auth0-callback events from the main process via the preload script
-  window.electron.onAuth0Callback((hashRoute: string) => {
-    console.log('Auth0 callback received from Electron main process:', hashRoute);
-    window.location.hash = hashRoute;
-  });
-  
-  // Also listen for custom events dispatched by the preload script
-  document.addEventListener('auth0-callback-received', (event: any) => {
-    console.log('Auth0 callback received via custom event:', event.detail);
-    window.location.hash = event.detail;
-  });
-}
+// This setTimeout is for debugging to see if properties appear later.
+setTimeout(() => {
+  console.log('⏰ After 200ms delay in main.tsx:');
+  console.log('  Delayed window.electron type:', typeof window.electron);
+  console.log('  Delayed window.electronIsPreloadedByScript:', (window as any).electronIsPreloadedByScript);
+}, 200);
 
-// Auth0 configuration - get from Electron if available, otherwise use Vite env vars
-let domain, clientId, audience;
+// Determine if running in Electron. Order of checks: direct API, preload flag, user agent.
+const electronAPIDetected = typeof window.electron !== 'undefined';
+const preloadScriptFlag = (window as any).electronIsPreloadedByScript === true;
+const userAgentIndicatesElectron = navigator.userAgent.toLowerCase().includes('electron/');
 
-// Helper function to clear Auth0 cache from localStorage
-const clearAuth0Cache = () => {
-  // This helps when switching accounts
-  console.log('Clearing Auth0 cache from localStorage');
-  
-  // Find and remove Auth0-related items
-  const keysToRemove = [];
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key && (
-      key.startsWith('auth0') || 
-      key.includes('auth0') || 
-      key.startsWith('@@auth0') ||
-      key.includes('user-info') ||
-      key.includes('denker-user')
-    )) {
-      keysToRemove.push(key);
-    }
-  }
-  
-  // Remove all keys in a separate loop to avoid iteration issues
-  keysToRemove.forEach(key => {
-    console.log('Removing cached Auth0 key:', key);
-    localStorage.removeItem(key);
-  });
-};
+const isElectron = electronAPIDetected || preloadScriptFlag || userAgentIndicatesElectron;
 
-if (isElectron && window.electron) {
-  // Get environment variables from Electron
-  const electronEnv = (window.electron as any).getEnvVars();
-  domain = electronEnv.VITE_AUTH0_DOMAIN || 'auth.denker.ai';
-  clientId = electronEnv.VITE_AUTH0_CLIENT_ID || 'lq6uzeeUp9i14E8FNpJwr0DVIP5VtOzQ';
-  audience = electronEnv.VITE_AUTH0_AUDIENCE || 'https://api.denker.ai';
-  
-  console.log('🔐 Auth0 config loaded from Electron:', {
-    domain: domain,
-    clientId: clientId ? (clientId.slice(0, 8) + '...') : 'MISSING',
-    audience: audience || 'MISSING'
-  });
-  
-  // Check for auth failure or token expiration in URL
-  const url = new URL(window.location.href);
-  const errorParam = url.searchParams.get('error');
-  if (errorParam) {
-    console.log('Auth error detected in URL, clearing cache');
-    clearAuth0Cache();
-  }
-} else {
-  // Regular browser - use Vite env vars
-  domain = import.meta.env.VITE_AUTH0_DOMAIN || 'auth.denker.ai';
-  clientId = import.meta.env.VITE_AUTH0_CLIENT_ID || 'lq6uzeeUp9i14E8FNpJwr0DVIP5VtOzQ';
-  audience = import.meta.env.VITE_AUTH0_AUDIENCE || 'https://api.denker.ai';
-}
-
-// Force settings in development mode
-const isDev = import.meta.env.DEV === true || import.meta.env.VITE_NODE_ENV === 'development'; 
-
-// In development mode, use fixed URLs
-const redirectUri = isDev 
-  ? 'http://localhost:5173/callback'
-  : (isElectron ? 'denker://callback' : window.location.origin + '/callback');
-
-// For Electron, we need to handle custom protocol
-if (isElectron) {
-  // For Electron in development mode using localhost
-  if (isDev) {
-    console.log('Using development redirect URI for Auth0:', redirectUri);
-  } 
-  // For packaged Electron app, we need to use the custom protocol
-  else {
-    // Ensure we're using the custom protocol in production
-    const customProtocolUrl = 'denker://callback';
-    console.log('Using custom protocol redirect URI for Auth0:', customProtocolUrl);
-  }
-}
-
-// Log config for debugging
-console.log('Auth0 Configuration:', {
-  domain,
-  clientId: clientId ? (clientId.slice(0, 8) + '...') : 'MISSING',
-  audience: audience || 'MISSING',
-  redirectUri,
-  isDev,
-  isElectron,
-  fullOrigin: window.location.origin,
+console.log('🔧 Final isElectron determination:', isElectron, {
+  electronAPIDetected,
+  preloadScriptFlag,
+  userAgentIndicatesElectron
 });
 
-// Error handler for Auth0
-const onRedirectCallback = (appState: any) => {
-  console.log('Auth0 redirect callback', appState);
-  
-  // Navigate to the intended route (or home if none provided)
-  const targetUrl = appState?.returnTo || window.location.pathname || '/';
-  
-  // In Electron environment, handle differently
-  if (isElectron && window.electron) {
-    window.location.href = `#${targetUrl}`;
-  } else {
-    // For web, use regular path
-    window.location.pathname = targetUrl;
-  }
-};
+// Determine if dev mode
+const isDev = import.meta.env.DEV === true || 
+  import.meta.env.VITE_NODE_ENV === 'development' || 
+  (isElectron && window.electron && window.electron.getEnvVars()?.VITE_NODE_ENV === 'development');
 
-// Define error handler (for use with window.addEventListener)
-const onError = (error: Error) => {
-  console.error('Auth0 error:', error);
-  console.error('Auth0 error details:', {
-    name: error.name,
-    message: error.message,
-    stack: error.stack,
-  });
-  
-  // Force console to be visible
-  console.log('%c AUTH0 ERROR - Check above for details', 'background: #ff0000; color: white; font-size: 20px');
-  
-  // Redirect to our custom error page
-  if (isElectron && window.electron) {
-    console.log('Redirecting to error page in Electron');
-    
-    // Use setTimeout to ensure logs are displayed
-    setTimeout(() => {
-      window.location.href = '#/auth/error';
-    }, 500);
-  } else {
-    // For web, include the error information in the URL
-    const errorMessage = encodeURIComponent(error.message || 'Unknown error');
-    console.log(`Redirecting to error page in browser with message: ${errorMessage}`);
-    
-    // Use setTimeout to ensure logs are displayed
-    setTimeout(() => {
-      window.location.href = `#/auth/error?error=auth0_error&error_description=${errorMessage}`;
-    }, 500);
-  }
-};
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Failed to find the root element with id 'root'");
+}
+const root = ReactDOM.createRoot(rootElement);
 
-// Render the app
-const root = ReactDOM.createRoot(document.getElementById('root')!);
+// Get environment variables once from preload
+const envVars = window.electron?.getEnvVars() || {};
+console.log('🔑 Renderer received ENV VARS from preload:', envVars);
 
-// In development mode with missing Auth0 credentials, render without Auth0Provider
-if (isDev && (!domain || !clientId)) {
-  root.render(
-    <React.StrictMode>
+// Potentially pass envVars down via context if needed elsewhere
+
+// Render the app wrapped with AuthProvider
+root.render(
+  <React.StrictMode>
+    <AuthProvider>
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <HashRouter>
           <App />
         </HashRouter>
       </ThemeProvider>
-    </React.StrictMode>
-  );
-} else {
-  // Normal rendering with Auth0Provider
-  root.render(
-    <React.StrictMode>
-      <Auth0Provider
-        domain={domain}
-        clientId={clientId}
-        authorizationParams={{
-          redirect_uri: isElectron && !isDev ? 'denker://callback' : redirectUri,
-          audience: audience,
-          scope: 'openid profile email',
-        }}
-        useRefreshTokens={true}
-        cacheLocation="localstorage"
-        onRedirectCallback={onRedirectCallback}
-      >
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          <HashRouter>
-            <App />
-          </HashRouter>
-        </ThemeProvider>
-      </Auth0Provider>
-    </React.StrictMode>
-  );
+    </AuthProvider>
+  </React.StrictMode>
+);
+
+// Call initBrowserActionHandler if it's still needed
+if (typeof initBrowserActionHandler === 'function') {
+  initBrowserActionHandler();
 } 

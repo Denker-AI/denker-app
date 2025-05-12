@@ -44,6 +44,49 @@ const defaultSettings: UserSettings = {
   autoSave: true,
 };
 
+// Helper to safely serialize/deserialize data with version tracking
+const createVersionedStorage = () => {
+  const STORAGE_VERSION = '1.1';
+  const STORAGE_KEY = 'denker-user-storage';
+  
+  return {
+    getItem: () => {
+      const data = localStorage.getItem(STORAGE_KEY);
+      if (!data) return null;
+      
+      try {
+        const parsed = JSON.parse(data);
+        
+        // Check if we have a version mismatch
+        if (parsed.version !== STORAGE_VERSION) {
+          console.log('Storage version mismatch, clearing stored data');
+          localStorage.removeItem(STORAGE_KEY);
+          return null;
+        }
+        
+        return data;
+      } catch (e) {
+        console.error('Error parsing stored user data:', e);
+        localStorage.removeItem(STORAGE_KEY);
+        return null;
+      }
+    },
+    setItem: (key, newValue) => {
+      const valueToStore = JSON.parse(newValue);
+      
+      // Add version info
+      valueToStore.version = STORAGE_VERSION;
+      
+      // Store with version info
+      localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(valueToStore)
+      );
+    },
+    removeItem: () => localStorage.removeItem(STORAGE_KEY),
+  };
+};
+
 const useUserStore = create<UserState>()(
   persist(
     (set) => ({
@@ -79,7 +122,7 @@ const useUserStore = create<UserState>()(
     }),
     {
       name: 'denker-user-storage', // unique name for localStorage key
-      storage: createJSONStorage(() => localStorage), // use localStorage by default
+      storage: createJSONStorage(() => createVersionedStorage()),
       partialize: (state) => ({
         // Only store user data and settings, not loading states
         profile: state.profile,
