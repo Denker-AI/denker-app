@@ -68,7 +68,6 @@ const NAVBAR_HEIGHT = 64;
 const MainWindowNew: React.FC = () => {
   const theme = useTheme();
   const { conversation, file, network } = useMainWindowHooks();
-  const { uploadFile } = useApi();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { getAccessToken } = useAuth();
   
@@ -553,7 +552,7 @@ const MainWindowNew: React.FC = () => {
     if (files && files.length > 0) {
       console.log(`[MainWindowNew] Uploading ${files.length} files for message ${userMessageId} with queryId ${queryId}`);
       const uploadPromises = files.map((file, index) => 
-        uploadFile(file, queryId, userMessageId)
+        api.uploadFile(file, queryId, userMessageId)
           .then((uploadResponse: { data: { id: string, url?: string } }) => {
             const fileData = uploadResponse.data;
             const realFileId = fileData.id;
@@ -733,7 +732,7 @@ const MainWindowNew: React.FC = () => {
           }
         }
     }
-  }, [conversation, uploadFile, mcpAgentClient, activeQueryId, realTimeUpdates, saveMessageToDatabase, fallbackToStandardApi, isWaitingForClarification]);
+  }, [conversation, mcpAgentClient, activeQueryId, realTimeUpdates, saveMessageToDatabase, fallbackToStandardApi, isWaitingForClarification]);
   
   // Reset network status (useful when recovering from errors)
   const handleResetNetwork = useCallback(() => {
