@@ -1,6 +1,6 @@
 [project]
-name = "denker-app-0-1-0"
-version = "0.1.0"
+name = "denker-app-amarone"
+version = "0.1.1"
 description = "denker-ai"
 authors = [
     {name = "jane"}
@@ -24,7 +24,6 @@ dependencies = [
     "asyncpg (>=0.28.0)",
     "python-multipart (>=0.0.6)",
     "python-jose (>=3.3.0)",
-    "cryptography (>=3.4.0)",
     "passlib[bcrypt] (>=1.7.4)",
     "httpx (>=0.25.0)",
     "tenacity (>=8.2.3)",
@@ -39,7 +38,6 @@ dependencies = [
     "chromadb (>=0.4.18)",
     "qdrant-client (>=1.6.4)",
     "pytesseract (>=0.3.10)",
-    "pypdf2 (>=3.0.1)",
     "redis (>=5.0.1)",
     "sentence-transformers (>=2.2.2)",
     "google-cloud-storage (>=2.10.0)",
@@ -50,24 +48,25 @@ dependencies = [
     "anthropic (==0.50.0)",
     "mcp-agent (==0.0.17)",
     "grpcio (>=1.71.0,<2.0.0)",
-    "unstructured[local-inference] (>=0.14.5,<0.15.0)",
-    "unstructured-inference (>=0.7.30,<0.8.0)",
-    "pillow-heif (>=0.16.0,<0.17.0)",
+    "unstructured[local-inference, image, pdf, docx, excel, markdown] (>=0.14.5)",
     "pypdf (>=4.2.0,<5.0.0)",
+    "pillow-heif (>=0.16.0,<0.17.0)",
     "beautifulsoup4 (>=4.12.0,<5.0.0)",
-    "pycryptodome (>=3.20.0,<4.0.0)"
+    "unstructured-inference (>=0.8.5)",
+    "watchdog (>=2.3.0)"
 ]
 
 [tool.poetry]
 name = "denker-app-backend"
 version = "0.1.0"
 description = "Denker AI Backend"
-authors = ["Your Name <you@example.com>"]
+authors = ["Juan Zhang <jane@denker.ai>"]
 readme = "README.md"
-packages = [{include = "denker_app_0"}]
+package-mode = false
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.12"
+pycrypto = { version = "*", optional = true, markers = "python_version < '0'" }
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

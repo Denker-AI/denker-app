@@ -104,7 +104,7 @@ export const useFileUpload = () => {
       };
 
       // Perform upload
-      const response = await api.uploadFileWithRetry(file, query_id, message_id, cancelToken.token, onUploadProgress);
+      const response = await api.uploadFileWithRetry("/files/upload", file, { query_id, message_id }, cancelToken.token, onUploadProgress);
       const fileData = response.data;
 
       // Transform API response to store format

@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     
     # Anthropic settings
     ANTHROPIC_API_KEY: str = Field(default="")
-    ANTHROPIC_MODEL: str = Field(default="claude-3-7-sonnet-20250219")
+    ANTHROPIC_MODEL: str = Field(default="claude-3-5-haiku-20241022")
     
     # Security settings
     SECRET_KEY: str = os.getenv("SECRET_KEY", "your-secret-key-here")

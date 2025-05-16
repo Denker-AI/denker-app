@@ -70,10 +70,10 @@ export const useCurrentConversation = () => {
       console.log(`[Diagnostic] Calling api.getConversation directly for initial load: ID=${id}, Params=${JSON.stringify({ limit: MESSAGES_PER_PAGE })}`);
       const response = await api.getConversation(id, { limit: MESSAGES_PER_PAGE });
 
-      if (!response || !response.data) {
+      if (!response) {
         throw new Error(`Conversation ${id} not found or API response invalid`);
       }
-      const conversationData = response.data;
+      const conversationData = response;
 
       const fetchedMessages = conversationData.messages || [];
       console.log(`API returned conversation ${id} with ${fetchedMessages.length} messages`);
@@ -319,10 +319,10 @@ export const useCurrentConversation = () => {
       console.log(`[Diagnostic] Calling api.getConversation directly for load more: ID=${currentConversationId}, Params=${JSON.stringify({ limit: MESSAGES_PER_PAGE, before_message_id: cursor })}`);
       const response = await api.getConversation(currentConversationId, { limit: MESSAGES_PER_PAGE, before_message_id: cursor });
 
-      if (!response || !response.data) {
+      if (!response) {
         throw new Error(`Invalid response when loading more messages for ${currentConversationId}`);
       }
-      const conversationData = response.data;
+      const conversationData = response;
       const fetchedMessages = conversationData.messages || [];
       const hasMore = conversationData.pagination?.has_more ?? false;
 
@@ -462,12 +462,12 @@ export const useCurrentConversation = () => {
       const response: any = await api.sendMessageWithRetry(text, currentConversationId, attachments);
 
       // Check response structure - ADJUST IF NEEDED based on actual API response
-      if (!response || !response.data || !response.data.id) { 
+      if (!response || !response.id) { 
         console.error('Invalid response from sendMessageWithRetry:', response);
         throw new Error('Invalid response from server when sending message');
       }
 
-      const serverMessageData = response.data; 
+      const serverMessageData = response; 
       updateMessage(currentConversationId, tempMessageId, { 
         ...tempMessage,
         id: serverMessageData.id, 

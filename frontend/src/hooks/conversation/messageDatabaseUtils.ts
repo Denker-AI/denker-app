@@ -43,7 +43,7 @@ export const useMessageDatabaseUtils = () => {
       return true;
     } catch (error: any) {
       // If the conversation doesn't exist (404), create it first then retry
-      if (error?.response?.status === 404) {
+      if (error && error.message && error.message.includes('404')) {
         console.log(`🔴 Conversation ${conversationId} not found in database, creating it first`);
         try {
           // Get the current conversation from the store to use as a base
@@ -56,12 +56,12 @@ export const useMessageDatabaseUtils = () => {
             title
           });
           
-          if (!response || !response.data) {
+          if (!response || !response.id) {
             console.error('🔴 Failed to create conversation: empty response');
             throw new Error('Failed to create conversation: empty response');
           }
           
-          const serverConversationId = response.data.id;
+          const serverConversationId = response.id;
           console.log(`🔴 Created new conversation with server ID: ${serverConversationId}, need to update our local ID from ${conversationId}`);
           
           // Now try to save the message to the new conversation ID

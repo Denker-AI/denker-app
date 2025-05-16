@@ -25,19 +25,24 @@ import HelpPage from './pages/HelpPage';
 import ContactPage from './pages/ContactPage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
 import TestPage from './pages/TestPage';
+import AuthCallbackPage from './pages/AuthCallbackPage';
 
 // Auth guard component
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { isAuthenticated, isLoading } = useAuth();
+  console.log('[ProtectedRoute] Status: isLoading=', isLoading, 'isAuthenticated=', isAuthenticated);
 
   if (isLoading) {
+    console.log('[ProtectedRoute] Rendering LoadingScreen because isLoading is true.');
     return <LoadingScreen message="Checking authentication..." />;
   }
 
   if (!isAuthenticated) {
-    console.log('[ProtectedRoute] Not authenticated, redirecting to /login');
+    console.log('[ProtectedRoute] Not authenticated, redirecting to /login because isAuthenticated is false.');
     return <Navigate to="/login" replace />;
   }
+
+  console.log('[ProtectedRoute] Authenticated, rendering children.');
 
   return <>{children}</>;
 };
@@ -63,6 +68,7 @@ const LogoutRoute = () => {
 };
 
 function App() {
+  console.log('[App.tsx] Mounted. Vite DEV mode:', import.meta.env.DEV, 'Vite MODE:', import.meta.env.MODE);
   const navigate = useNavigate();
   const isElectron = window.electron !== undefined;
 
@@ -105,6 +111,7 @@ function App() {
       <Routes>
         {/* Public routes that need to be outside the FileSystemProviders */}
         <Route path="/login" element={<Login />} />
+        <Route path="/callback" element={<AuthCallbackPage />} />
         <Route path="/404" element={<NotFoundPage />} />
         <Route path="/auth/error" element={<AuthErrorPage />} />
         <Route path="/subwindow" element={<SubWindow />} />

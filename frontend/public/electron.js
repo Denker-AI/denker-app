@@ -1,3 +1,4 @@
+console.log("### EXECUTING frontend/public/electron.js - VERSION XYZ ###");
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -43,13 +44,42 @@ const MAX_CLIPBOARD_AGE = 20000;
 
 // Add API configuration
 const API_URL = process.env.VITE_API_URL || 'http://127.0.0.1:8001/api/v1';
-const WS_URL = process.env.VITE_WS_URL || 'ws://127.0.0.1:8001/api/v1';
+
+// Ensure WS_URL is the base URL without /api/v1
+// let rawWsUrl = process.env.VITE_WS_URL;
+// if (rawWsUrl) {
+//   // If VITE_WS_URL is set, remove /api/v1 if it exists at the end
+//   rawWsUrl = rawWsUrl.replace(/\/api\/v1\/?$/, '');
+// }
+// const WS_URL = rawWsUrl || 'ws://127.0.0.1:8001'; // Default if not set or after stripping
+// console.log('[electron.js] Determined WS_URL:', WS_URL); // Debug log
+
+let determinedWsUrl;
+const envWsUrl = process.env.VITE_WS_URL;
+
+if (envWsUrl) {
+    try {
+        const parsedUrl = new URL(envWsUrl);
+        determinedWsUrl = `${parsedUrl.protocol}//${parsedUrl.host}`; // Reconstruct without path
+        console.log(`[electron.js] Used envWsUrl ('${envWsUrl}') and reconstructed to: ${determinedWsUrl}`);
+    } catch (e) {
+        console.warn(`[electron.js] process.env.VITE_WS_URL ('${envWsUrl}') is invalid, falling back to default. Error: ${e.message}`);
+        determinedWsUrl = 'ws://127.0.0.1:8001';
+    }
+} else {
+    console.log('[electron.js] process.env.VITE_WS_URL not set, using default.');
+    determinedWsUrl = 'ws://127.0.0.1:8001';
+}
+
+const WS_URL = determinedWsUrl;
+console.log('[electron.js] Final Determined WS_URL:', WS_URL);
+
 const API_KEY = process.env.VITE_API_KEY;
 
 // Store the API URLs for use in the renderer
 const RENDERER_ENV_VARS = {
   VITE_API_URL: API_URL,
-  VITE_WS_URL: WS_URL,
+  VITE_WS_URL: WS_URL, // This will now be correctly ws://127.0.0.1:8001
   VITE_API_KEY: API_KEY,
   // Add Auth0 configuration with hard-coded fallbacks for production
   VITE_AUTH0_DOMAIN: process.env.VITE_AUTH0_DOMAIN || 'auth.denker.ai',
@@ -181,6 +211,15 @@ app.whenReady().then(() => {
   // Add any others you might have used previously
   console.log('[*] IPC Handler setup complete.');
   // --- END Auth IPC Handlers ---
+
+  // IPC handler to provide environment variables to the renderer
+  ipcMain.handle('get-renderer-env-vars', () => {
+    console.log('[electron.js IPC] Request received for RENDERER_ENV_VARS.');
+    console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_WS_URL is:', RENDERER_ENV_VARS.VITE_WS_URL);
+    console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_API_URL is:', RENDERER_ENV_VARS.VITE_API_URL);
+    console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_NODE_ENV is:', RENDERER_ENV_VARS.VITE_NODE_ENV);
+    return RENDERER_ENV_VARS;
+  });
 
   app.on('activate', function () {
     console.log('🚀 electron.js: app.on(\'activate\') triggered. Timestamp:', Date.now());
@@ -1204,80 +1243,58 @@ function forwardAuthDataToRenderer(params) { // This function seems unused or pa
 // Key for storing auth tokens in electron-store
 const AUTH_TOKEN_KEY = 'authTokens';
 
-// Define setupAuth0Authentication function (was missing)
+// Define setupAuth0Authentication function
 function setupAuth0Authentication() {
   console.log('🔐 Setting up Auth0 authentication listeners...');
   
-  // Start the HTTP callback server in production for backward compatibility / handling callback
-  // (Even if token exchange is in main, server receives initial code/state)
-  if (!isDev) {
+  // Start the HTTP callback server ONLY IN PRODUCTION
+  // In Dev, Vite's server or direct redirects might be used
+  if (!isDev) { // Assuming 'isDev' is defined in this scope
+    console.log("[AUTH Setup] Starting HTTP callback server for Production.");
     startAuthServer(); 
+  } else {
+    console.log("[AUTH Setup] Skipping HTTP callback server start in Development.");
+    // In Dev mode, set up an IPC handler for the renderer to send auth params
+    ipcMain.handle('dev-process-auth0-callback', async (event, params) => {
+      console.log('[MAIN_PROCESS_DEV_AUTH] Received code and state from renderer:', { hasCode: !!params.code, hasState: !!params.state });
+      try {
+        // Directly call the main handler used by the production auth server
+        // This reuses all existing logic for token exchange, state validation, IPC back to renderer etc.
+        await handleAuth0Callback(params); // handleAuth0Callback is already async
+        // handleAuth0Callback itself will send 'auth-successful' or 'auth-failed' to the renderer.
+        return { success: true }; // Indicates IPC call was received and initiated processing
+      } catch (error) {
+        console.error('[MAIN_PROCESS_DEV_AUTH] Critical error during handleAuth0Callback invocation in dev:', error);
+        // This catch is for errors in *calling* handleAuth0Callback or if it throws unexpectedly
+        // handleAuth0Callback should ideally handle its own errors and send 'auth-failed'.
+        // If handleAuth0Callback fails to send 'auth-failed', we send a generic one.
+        if (event.sender && !event.sender.isDestroyed()) {
+            event.sender.send('auth-failed', { error: 'dev_callback_processing_error', error_description: error.message || 'Unknown error processing dev callback.' });
+        }
+        return { success: false, error: error.message || 'Unknown error processing dev callback.' };
+      }
+    });
+    console.log('[MAIN_PROCESS_DEV_AUTH] IPC handler "dev-process-auth0-callback" is ready for development mode.');
   }
   
   // Register IPC listener for renderer to trigger system browser login
-  ipcMain.on('auth0-login-request', (event) => {
-    console.log('🔓 Received auth0-login-request from renderer');
-    openSystemBrowserForAuth(); // Call the function to open browser with PKCE
-  });
-  console.log('🔐 Auth0 login request listener ready.');
-    
-  // --- ADDED: Handler for renderer to request logout --- 
-  ipcMain.handle('logout', async () => {
-    console.log('🚪 Received logout request from renderer');
-    const tokens = store.get(AUTH_TOKEN_KEY);
-    store.delete(AUTH_TOKEN_KEY); // Clear local tokens immediately
-    console.log('[IPC logout] Local tokens cleared.');
-
-    const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
-    const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
-    
-    // Determine the correct returnTo URL based on environment
-    const returnTo = isDev 
-      ? 'http://localhost:5173' // Dev returns to Vite server (or wherever your app is)
-      : 'http://localhost:8123/logout-success'; // Packaged app returns to our local auth server's logout page
-
-    console.log(`[IPC logout] Using returnTo URL: ${returnTo}`);
-
-    const logoutUrl = new URL(`https://${auth0Domain}/v2/logout`);
-    logoutUrl.searchParams.append('client_id', clientId);
-    logoutUrl.searchParams.append('returnTo', returnTo); 
-
+  // This should remain as is
+  ipcMain.handle('login', async () => { // Changed to handle, can be async if needed
+    console.log('🔓 Received login request from renderer');
     try {
-      console.log(`[IPC logout] Opening external browser for Auth0 logout: ${logoutUrl.toString()}`);
-      await shell.openExternal(logoutUrl.toString());
-      // Notify renderer that logout process started (optional, depends on desired UX)
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send('auth-logged-out');
-      }
-      return { success: true };
+      openSystemBrowserForAuth(); // Call the function to open browser with PKCE
+      return { success: true }; // Indicate the process started
     } catch (error) {
-      console.error('❌ Failed to open external browser for logout:', error);
-      return { success: false, error: error.message || 'Failed to start logout process.' };
-      }
-  });
-  console.log('🔐 Auth0 logout request listener (\'logout\') ready.');
-    
-  // --- ADDED: Handler for renderer to request access token ---
-  ipcMain.handle('get-access-token', async () => { // Make async for potential refresh logic
-    const tokens = store.get(AUTH_TOKEN_KEY);
-    if (!tokens || !tokens.accessToken) {
-      console.log('[IPC get-access-token] No access token found.');
-      return null;
+       console.error("❌ Error initiating login:", error);
+       return { success: false, error: error.message || 'Failed to start login process.' };
     }
-  
-    // **TODO: Implement token expiry check and refresh logic here**
-    const expiryTime = tokens.receivedAt + (tokens.expiresIn * 1000);
-    if (Date.now() >= expiryTime) {
-        console.warn('[IPC get-access-token] Access token expired. Need refresh logic.');
-        // Attempt refresh here if refreshToken exists
-        // For now, return null, forcing re-login potentially
-        store.delete(AUTH_TOKEN_KEY); // Clear expired tokens
-        return null;
-    }
-  
-    console.log('[IPC get-access-token] Returning stored access token.');
-    return tokens.accessToken;
   });
+  console.log("🔐 Auth0 login request listener ('login') ready.");
+
+  // ... other potential handlers like 'logout', 'getAccessToken', 'getUserInfo' should be here ...
+  // Ensure ipcMain.handle('logout', ...) is correctly defined
+  // Ensure ipcMain.handle('getAccessToken', ...) is correctly defined
+  // Ensure ipcMain.handle('getUserInfo', ...) is correctly defined
 }
 
 const crypto = require('crypto'); // Add crypto for PKCE
@@ -1360,6 +1377,7 @@ async function handleAuth0Callback(params) { // Make async
   const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
   const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
   const redirectUri = isDev ? 'http://localhost:5173/callback' : 'http://localhost:8123/callback'; // Use the correct URI for the server
+  console.log(`[AUTH] Determined redirectUri: ${redirectUri} (isDev: ${isDev})`);
 
   const tokenUrl = `https://${auth0Domain}/oauth/token`;
   const tokenParams = new URLSearchParams({
@@ -1429,7 +1447,7 @@ async function handleAuth0Callback(params) { // Make async
  * Generates PKCE code challenge and state parameter.
  */
 function openSystemBrowserForAuth() {
-  console.log('[AUTH] Initiating login flow...');
+  console.log('[AUTH] Initiating login flow in openSystemBrowserForAuth...');
 
   // Generate PKCE verifier and challenge
   pkceVerifier = base64URLEncode(crypto.randomBytes(32));
@@ -1448,6 +1466,7 @@ function openSystemBrowserForAuth() {
   const redirectUri = isDev 
     ? 'http://localhost:5173/callback' // Dev server handles callback directly
     : 'http://localhost:8123/callback'; // Production uses dedicated server
+  console.log(`[AUTH] Determined redirectUri: ${redirectUri} (isDev: ${isDev})`);
 
   // Define scopes - openid, profile, email are standard, offline_access for refresh token
   const scope = 'openid profile email offline_access'; 
@@ -1475,36 +1494,4 @@ function openSystemBrowserForAuth() {
        mainWindow.webContents.send('auth-failed', 'Failed to open the login page in your browser.');
      }
   });
-}
-
-// Define setupAuth0Authentication function 
-function setupAuth0Authentication() {
-  console.log('🔐 Setting up Auth0 authentication listeners...');
-  
-  // Start the HTTP callback server ONLY IN PRODUCTION
-  // In Dev, Vite's server or direct redirects might be used
-  if (!isDev) {
-    console.log("[AUTH Setup] Starting HTTP callback server for Production.")
-    startAuthServer(); 
-  } else {
-    console.log("[AUTH Setup] Skipping HTTP callback server start in Development.")
-  }
-  
-  // Register IPC listener for renderer to trigger system browser login
-  // ** RENAMED from 'auth0-login-request' to 'login' **
-  ipcMain.handle('login', async () => { // Changed to handle, can be async if needed
-    console.log('🔓 Received login request from renderer');
-    try {
-      openSystemBrowserForAuth(); // Call the function to open browser with PKCE
-      return { success: true }; // Indicate the process started
-    } catch (error) {
-       console.error("❌ Error initiating login:", error);
-       return { success: false, error: error.message || 'Failed to start login process.' };
-    }
-  });
-  console.log('🔐 Auth0 login request listener (\'login\') ready.');
-
-  // Add listener for Auth0 callback data (from old flow, should be removed or adapted)
-  // ipcMain.on('auth0-callback-data', (event, data) => { ... }); // KEEPING THIS COMMENTED FOR NOW
-  // Instead, handleAuth0Callback is called directly by the HTTP server
 }

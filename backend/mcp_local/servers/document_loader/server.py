@@ -31,12 +31,12 @@ app = FastMCP(name="document-loader", version="1.0.0")
 
 # Import extractors - using try/except to handle potential missing dependencies
 try:
-    import PyPDF2
+    import pypdf
     def extract_pdf(file_path: str) -> str:
         try:
             text = ""
             with open(file_path, "rb") as file:
-                reader = PyPDF2.PdfReader(file)
+                reader = pypdf.PdfReader(file)
                 for page_num in range(len(reader.pages)):
                     page_text = reader.pages[page_num].extract_text() or ""
                     text += page_text + "\n\n"
@@ -45,9 +45,9 @@ try:
             logger.error(f"Error extracting PDF content: {str(e)}")
             return f"[Error extracting PDF content: {str(e)}]"
 except ImportError:
-    logger.warning("PyPDF2 not installed. PDF extraction will not be available.")
+    logger.warning("pypdf not installed. PDF extraction will not be available.")
     def extract_pdf(file_path: str) -> str:
-        return "[PDF extraction not available: PyPDF2 not installed]"
+        return "[PDF extraction not available: pypdf not installed]"
 
 try:
     import docx

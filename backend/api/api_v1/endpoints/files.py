@@ -62,7 +62,7 @@ async def list_files(
             "is_deleted": file.is_deleted,
             "metadata": file.meta_data
         }
-        for file in files
+        for file in files if not file.is_deleted
     ]
 
 @router.post("/upload")

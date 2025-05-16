@@ -419,10 +419,15 @@ class CoordinatorAgent:
         self.pending_clarifications: Dict[str, Dict[str, Any]] = {} # {conversation_id: {query_id: str, workflow: str}}
         # --- END ADDED ---
         
+        # --- ADDED: Cache for agent LLM instances ---
+        self.agent_llm_cache: Dict[str, SemaphoreGuardedLLM] = {}
+        # --- END ADDED ---
+        
         # Initialize modular components
         self.agent_config = AgentConfiguration(
             websocket_manager=self.websocket_manager,
-            memory=self.memory
+            memory=self.memory,
+            create_llm_fn=self._create_anthropic_llm # Pass the LLM factory
         )
         
         # Initialize agent registry
@@ -486,6 +491,44 @@ class CoordinatorAgent:
             if self.websocket_manager is None:
                 logger.warning("No WebSocket manager provided, creating a dummy manager")
                 self.websocket_manager = DummyWebSocketManager()
+            
+            # --- ADDED: Pre-warm critical MCP servers ---
+            # Ensure MCPApp and its context are initialized before this
+            if self.mcp_app and self.mcp_app.context and self.mcp_app.context.server_registry:
+                # Get server names from your agent_configs or a predefined list
+                # For this example, using keys from agent_configs that might have server_names
+                # A more robust way would be to get all keys from self.mcp_app.context.server_registry if available,
+                # or maintain a separate list of critical server names.
+                
+                all_configured_server_names = list(self.mcp_app.context.server_registry.registry.keys()) # Corrected line
+                logger.info(f"Attempting to pre-warm MCP servers: {all_configured_server_names}")
+
+                # Import MCPAggregator here if not already at the top level
+                from mcp_agent.mcp.mcp_aggregator import MCPAggregator
+
+                for server_name in all_configured_server_names:
+                    if not server_name: # Skip if server_name is empty or None
+                        continue
+                    logger.info(f"Pre-warming server: {server_name}...")
+                    try:
+                        # Create a temporary aggregator for this server to trigger connection manager
+                        # Assuming connection_persistence=True is the desired default for pre-warming
+                        temp_aggregator = MCPAggregator(
+                            server_names=[server_name],
+                            connection_persistence=True, 
+                            context=self.mcp_app.context
+                        )
+                        await temp_aggregator.initialize(force=True) # force=True to ensure it tries
+                        # Optionally, you could call a lightweight method like list_tools or get_capabilities
+                        # await temp_aggregator.list_tools() 
+                        await temp_aggregator.close() # Clean up the temporary aggregator
+                        logger.info(f"Successfully pre-warmed server: {server_name}")
+                    except Exception as e:
+                        logger.error(f"Failed to pre-warm server '{server_name}': {e}", exc_info=True)
+                logger.info("MCP Server pre-warming attempt finished.")
+            else:
+                logger.warning("MCPApp context or server_registry not available, skipping server pre-warming.")
+            # --- END ADDED ---
             
             self.is_setup = True
             logger.info("CoordinatorAgent setup completed successfully")
@@ -589,10 +632,13 @@ class CoordinatorAgent:
         
         # Handle agent parameter - this is used by Orchestrator's llm_factory
         agent = kwargs.get('agent')
+        agent_name_for_config_lookup = None
+
         if agent and hasattr(agent, 'name'):
             # When an Agent object is passed directly (from Orchestrator)
             agent_name = agent.name
             kwargs['agent_name'] = agent_name
+            agent_name_for_config_lookup = agent_name
             
             # Use the agent's instruction directly if available
             if hasattr(agent, 'instruction') and agent.instruction:
@@ -602,26 +648,64 @@ class CoordinatorAgent:
                 kwargs['instruction'] = self.agent_config.agent_configs[agent_name]['instruction']
         else:
             # Get agent name from kwargs if available
-            agent_name = kwargs.get('agent_name')
+            agent_name_for_config_lookup = kwargs.get('agent_name')
             
             # Get instruction from agent config if available
-            if agent_name and agent_name in self.agent_config.agent_configs:
-                kwargs['instruction'] = self.agent_config.agent_configs[agent_name]['instruction']
+            if agent_name_for_config_lookup and agent_name_for_config_lookup in self.agent_config.agent_configs:
+                kwargs['instruction'] = self.agent_config.agent_configs[agent_name_for_config_lookup]['instruction']
         
-        # --- MODIFIED: Use Fixed Subclass ---
-        llm = FixedAnthropicAugmentedLLM(*args, **kwargs)
+        print(f"[_create_anthropic_llm] DEBUG: Initial agent_name_for_config_lookup: {agent_name_for_config_lookup}")
+
+        # --- ADDED: Check cache first ---
+        if agent_name_for_config_lookup and agent_name_for_config_lookup in self.agent_llm_cache:
+            logger.info(f"Returning cached LLM instance for agent '{agent_name_for_config_lookup}'")
+            print(f"[_create_anthropic_llm] DEBUG: Returning cached LLM for {agent_name_for_config_lookup}")
+            return self.agent_llm_cache[agent_name_for_config_lookup]
+        # --- END ADDED ---
+
+        chosen_model = DEFAULT_MODEL # Start with the system default
+        print(f"[_create_anthropic_llm] DEBUG: Initial chosen_model (from DEFAULT_MODEL): {chosen_model}")
+
+        if agent_name_for_config_lookup and agent_name_for_config_lookup in self.agent_config.agent_configs:
+            agent_specific_config = self.agent_config.agent_configs[agent_name_for_config_lookup]
+            print(f"[_create_anthropic_llm] DEBUG: Found config for {agent_name_for_config_lookup}: {agent_specific_config.get('model')}")
+            if 'model' in agent_specific_config and agent_specific_config['model']:
+                chosen_model = agent_specific_config['model']
+                logger.info(f"Using agent-specific model '{chosen_model}' for agent '{agent_name_for_config_lookup}'")
+                print(f"[_create_anthropic_llm] DEBUG: Overridden chosen_model with agent-specific: {chosen_model} for agent {agent_name_for_config_lookup}")
+            else:
+                logger.info(f"No specific model in config for agent '{agent_name_for_config_lookup}', using default '{chosen_model}'")
+                print(f"[_create_anthropic_llm] DEBUG: No specific model in config for {agent_name_for_config_lookup}, chosen_model remains: {chosen_model}")
+        else:
+            logger.info(f"No agent_name_for_config_lookup or agent config found, using default model '{chosen_model}' for this LLM instance.")
+            print(f"[_create_anthropic_llm] DEBUG: No agent_name_for_config_lookup or agent config found, chosen_model remains: {chosen_model}")
+
+        # --- MODIFIED: Use Fixed Subclass and pass chosen_model to constructor ---
+        llm = FixedAnthropicAugmentedLLM(*args, **kwargs, model=chosen_model)
         # --- END MODIFIED ---
         
         # Explicitly set the model in the default request params to override model selection
+        # This is somewhat redundant if the constructor handles it, but ensures consistency
         if not hasattr(llm, 'default_request_params') or llm.default_request_params is None:
-            llm.default_request_params = RequestParams(model=DEFAULT_MODEL)
+            llm.default_request_params = RequestParams(model=chosen_model)
         else:
-            llm.default_request_params.model = DEFAULT_MODEL
+            llm.default_request_params.model = chosen_model
         
-        logger.info(f"Created AnthropicAugmentedLLM with model {DEFAULT_MODEL}")
+        print(f"[_create_anthropic_llm] DEBUG: Final llm.default_request_params.model: {llm.default_request_params.model} for agent {agent_name_for_config_lookup}")
+        logger.info(f"Created AnthropicAugmentedLLM instance, configured to use model: {chosen_model}")
+        
         # --- MODIFICATION: Return wrapped LLM --- 
-        return SemaphoreGuardedLLM(llm, self.llm_semaphore)
+        guarded_llm = SemaphoreGuardedLLM(llm, self.llm_semaphore)
         # --- END MODIFICATION ---
+
+        # --- ADDED: Store in cache before returning ---
+        if agent_name_for_config_lookup:
+            self.agent_llm_cache[agent_name_for_config_lookup] = guarded_llm
+            logger.info(f"Cached new LLM instance for agent '{agent_name_for_config_lookup}'")
+            print(f"[_create_anthropic_llm] DEBUG: Cached new LLM for {agent_name_for_config_lookup}")
+        # --- END ADDED ---
+        
+        return guarded_llm
     
     async def process_query(
         self,
@@ -1764,13 +1848,21 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         The default implementation uses Claude as the LLM.
         Override this method to use a different LLM.
         """
+        # --- ADDED LOGGING ---
+        self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Received message type: {type(message)}")
+        self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Received message content (first 500 chars): {str(message)[:500]}")
+        # --- END ADDED LOGGING ---
+
         config = self.context.config
         anthropic = Anthropic(api_key=config.anthropic.api_key)
         messages: List[MessageParam] = []
         params = self.get_request_params(request_params)
 
         if params.use_history:
+            self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] use_history is TRUE. Extending messages with history.")
             messages.extend(self.history.get())
+        else:
+            self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] use_history is FALSE. Not using history.")
 
         if isinstance(message, str):
             messages.append({"role": "user", "content": message})
@@ -1821,6 +1913,14 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                 arguments = {**arguments, **params.metadata}
 
             self.logger.debug(f"{arguments}")
+            # --- ADDED LOGGING ---
+            self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Messages before API call (length {len(messages)}):")
+            for i, msg in enumerate(messages):
+                self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Message [{i}]: Role='{msg.get('role')}', Content (first 200 chars of str, or type if not str): {str(msg.get('content'))[:200] if isinstance(msg.get('content'), str) else type(msg.get('content'))}")
+                if isinstance(msg.get('content'), list):
+                    for j, content_item in enumerate(msg.get('content')):
+                        self.logger.info(f"[FixedAnthropicAugmentedLLM.generate]   Content item [{j}]: Type='{content_item.get('type') if isinstance(content_item, dict) else type(content_item)}', Text (first 100 chars): {str(content_item.get('text') if isinstance(content_item, dict) else content_item)[:100]}")
+            # --- END ADDED LOGGING ---
             self._log_chat_progress(chat_turn=(len(messages) + 1) // 2, model=model)
 
             executor_result = await self.executor.execute(

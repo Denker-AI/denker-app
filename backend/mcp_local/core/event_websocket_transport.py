@@ -337,6 +337,12 @@ class WebSocketEventTransport(EventTransport):
             agent_name = namespace.split('.')[-1] # Simple agent name extraction
             step_type = self._get_step_type(event) # Determine step type
             
+            # --- ADDED: Filter out specific "Calling Tool" events from "LLM Orchestration Planner" --- 
+            if agent_name == "LLM Orchestration Planner" and step_type == "Calling Tool":
+                logger.info(f"[{query_id}] FILTERED WebSocket update: Skipping 'Calling Tool' event from '{agent_name}'. Original message: '{original_message[:100]}...'")
+                return # Skip sending this specific update
+            # --- END ADDED --- 
+
             # --- ADDED: Log Raw Event --- 
             try:
                 # Use repr for potentially complex objects, limit length

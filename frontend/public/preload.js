@@ -1,3 +1,4 @@
+console.log("### EXECUTING frontend/public/preload.js - VERSION XYZ ###");
 console.log('🌍 Preload script TOP LEVEL started. Timestamp:', Date.now());
 try {
 const { contextBridge, ipcRenderer } = require('electron');
@@ -55,47 +56,27 @@ contextBridge.exposeInMainWorld(
         toggleTransparency: (isTransparent) => ipcRenderer.invoke('toggle-transparency', isTransparent),
     
     // Environment variables
-    getEnvVars: () => {
-          const args = process.argv; // Command line arguments passed to the renderer process
-          const getArgValue = (argName) => {
-            const fullArgName = `--${argName}=`;
-            const arg = args.find(a => a.startsWith(fullArgName));
-            return arg ? arg.substring(fullArgName.length) : undefined;
-          };
-      
-          // Determine if running in a development-like environment based on arguments or typical Node.js env var
-          // This is tricky in preload. Best if VITE_NODE_ENV is reliably passed from main.
-          const nodeEnvArg = getArgValue('node-env');
-          const isLikelyDev = nodeEnvArg === 'development' || process.env.NODE_ENV === 'development';
-
-
-          const envVars = {
-            VITE_AUTH0_DOMAIN: getArgValue('auth0-domain') || 'auth.denker.ai', // Fallback to your custom domain
-            VITE_AUTH0_CLIENT_ID: getArgValue('auth0-client-id') || 'lq6uzeeUp9i14E8FNpJwr0DVIP5VtOzQ', // Your actual client ID as fallback
-            VITE_AUTH0_AUDIENCE: getArgValue('auth0-audience') || 'https://api.denker.ai', // Your actual audience as fallback
-            VITE_API_URL: getArgValue('api-url') || 'http://localhost:8001/api/v1', // Example fallback
-            VITE_WS_URL: getArgValue('ws-url') || 'ws://127.0.0.1:8001/api/v1', // Example fallback
-            VITE_NODE_ENV: nodeEnvArg || (isLikelyDev ? 'development' : 'production')
-          };
-          
-          console.log('Preload SCRIPT providing these ENV VARS to renderer via process.argv parsing:', {
-            VITE_AUTH0_DOMAIN: envVars.VITE_AUTH0_DOMAIN,
-            VITE_AUTH0_CLIENT_ID: envVars.VITE_AUTH0_CLIENT_ID ? envVars.VITE_AUTH0_CLIENT_ID.substring(0, 8) + '...' : 'MISSING',
-            VITE_AUTH0_AUDIENCE: envVars.VITE_AUTH0_AUDIENCE,
-            VITE_NODE_ENV: envVars.VITE_NODE_ENV,
-            NODE_ENV_FROM_PRELOAD_PROCESS_ENV: process.env.NODE_ENV, // For debugging what preload sees
-            ALL_PROCESS_ARGS_IN_PRELOAD: process.argv.join(' ') // For debugging
-          });
-          
-          return envVars;
+    getEnvVars: async () => {
+      console.log('[preload.js] Requesting ENV_VARS from main process...');
+      try {
+        const envVars = await ipcRenderer.invoke('get-renderer-env-vars');
+        console.log('[preload.js] Received ENV_VARS from main:', envVars ? {
+            VITE_WS_URL: envVars.VITE_WS_URL,
+            VITE_API_URL: envVars.VITE_API_URL,
+            VITE_NODE_ENV: envVars.VITE_NODE_ENV
+        } : 'undefined');
+        return envVars || {};
+      } catch (error) {
+        console.error('[preload.js] Error invoking get-renderer-env-vars:', error);
+        return {
+            VITE_API_URL: 'http://localhost:8001/api/v1',
+            VITE_WS_URL: 'ws://127.0.0.1:8001',
+            VITE_NODE_ENV: 'production'
+        };
+      }
     },
     
     // API configuration
-    getApiUrl: () => {
-      const args = process.argv;
-      const apiUrlArg = args.find(arg => arg.startsWith('--api-url='));
-      return apiUrlArg ? apiUrlArg.replace('--api-url=', '') : (process.env.VITE_API_URL || 'http://localhost:8001/api/v1');
-    },
     getApiKey: () => ipcRenderer.invoke('get-api-key'),
     
     // Data capture
@@ -193,7 +174,10 @@ contextBridge.exposeInMainWorld(
         },
         
         // General utility functions
-        exitApp: () => ipcRenderer.invoke('app:exit')
+        exitApp: () => ipcRenderer.invoke('app:exit'),
+
+        // Add the new function for dev mode callback processing
+        devProcessAuth0Callback: (params) => ipcRenderer.invoke('dev-process-auth0-callback', params)
       }
     );
     console.log('✅ Preload script: Successfully exposed electron API. Timestamp:', Date.now());

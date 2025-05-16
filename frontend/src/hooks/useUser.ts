@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 import useUserStore, { UserProfile, UserSettings } from '../store/userStore';
 // REMOVE useApi import
 // import { useApi } from '../services/api';
-import api from '../services/api'; // IMPORT default axios instance
+import { api } from '../services/api'; // CORRECT: Use named import for the new api service
 
 export const useUser = () => {
   // REMOVE Auth0 related state/hooks

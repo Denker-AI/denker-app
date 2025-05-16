@@ -1,4 +1,11 @@
-const API_BASE_URL = window.electron?.getEnvVars()?.VITE_API_URL || 'http://localhost:8001/api/v1';
+let API_BASE_URL;
+if (import.meta.env.DEV) {
+  API_BASE_URL = 'http://localhost:8001/api/v1';
+} else {
+  // IMPORTANT: Replace this with your actual production API URL
+  API_BASE_URL = import.meta.env.VITE_API_URL_PROD || 'https://your-prod-api.denker.ai/api/v1'; 
+}
+console.log('[fetchWithAuth] Determined API_BASE_URL:', API_BASE_URL, '(Dev mode:', import.meta.env.DEV+')');
 
 /**
  * Fetches data from the backend API, automatically handling authentication.
@@ -12,11 +19,13 @@ export const fetchWithAuth = async (
   endpoint: string, 
   options: RequestInit = {}
 ): Promise<Response> => {
+  console.log('[fetchWithAuth] called with endpoint:', endpoint, 'options:', options);
   let token: string | null = null;
   
   try {
     // 1. Request token from main process via IPC
     token = await window.electron?.getAccessToken();
+    console.log('[fetchWithAuth] Token:', token);
   } catch (error) {
     console.error('Error requesting access token via IPC:', error);
     // Decide how to handle this - maybe throw a specific error?
@@ -25,7 +34,16 @@ export const fetchWithAuth = async (
   
   // 2. Prepare headers
   const headers = new Headers(options.headers || {});
-  headers.set('Content-Type', headers.get('Content-Type') || 'application/json');
+  // headers.set('Content-Type', headers.get('Content-Type') || 'application/json');
+
+  // Only set default Content-Type if it's not FormData and not already set
+  if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+  // If it is FormData, we let fetch() set the Content-Type header automatically.
+  // If options.headers already contains a Content-Type for FormData, fetch() will use that,
+  // but this is generally not recommended as fetch handles the boundary parameter best.
+
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   } else {
@@ -35,6 +53,7 @@ export const fetchWithAuth = async (
   
   // 3. Construct full URL
   const url = `${API_BASE_URL}${endpoint}`;
+  console.log('[fetchWithAuth] Final URL:', url, 'Headers:', headers);
   
   // 4. Make the fetch request
   console.log(`fetchWithAuth: ${options.method || 'GET'} ${url}`);
@@ -42,6 +61,7 @@ export const fetchWithAuth = async (
     ...options,
     headers,
   });
+  console.log('[fetchWithAuth] Response status:', response.status);
   
   // 5. Optional: Check for 401 Unauthorized response - might indicate expired token
   if (response.status === 401) {

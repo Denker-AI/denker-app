@@ -6,6 +6,8 @@ WORKDIR /app
 # Install system dependencies - with proper cleanup in one layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    libssl-dev \
+    libffi-dev \
     python3.11-dev \
     nodejs \
     npm \
@@ -23,29 +25,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
     # Add additional dependencies for markdown processing
     pandoc \
+    wkhtmltopdf \
+    xvfb \
     # Cleanup in the same layer to reduce image size
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install npm dependencies
 RUN npm install -g @gongrzhe/quickchart-mcp-server@1.0.4
+RUN npm install -g @modelcontextprotocol/server-filesystem@0.6.2
+
+# Install Poetry
+RUN pip install poetry==2.1.3
+
+# Explicitly install CPU-only PyTorch first to prevent CUDA downloads
+# Use pip to install the CPU-only version and prevent large CUDA package downloads
+RUN pip install torch==2.7.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
 
 # Copy project configuration
 COPY pyproject.toml poetry.lock* /app/
 
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 -
-
-# Explicitly install CPU-only PyTorch first to prevent CUDA downloads
-# Use pip to install the CPU-only version and prevent large CUDA package downloads
-RUN pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu --no-cache-dir
-
-# Install critical cryptography packages first to prevent pycrypto
-RUN pip install cryptography>=3.4.0 pycryptodome>=3.20.0
-
 # Install Python dependencies using Poetry - with proper options
-RUN $HOME/.local/bin/poetry config virtualenvs.create false \
-    && $HOME/.local/bin/poetry install --no-root --no-interaction --no-ansi \
+RUN poetry config virtualenvs.create false \
+    && poetry install --no-root --no-interaction --no-ansi \
     # Cleanup pip cache in the same layer
     && pip cache purge
 
@@ -65,6 +67,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     default-jre \
     libreoffice \
     pandoc \
+    wkhtmltopdf \
+    xvfb \
     # Node.js runtime if needed for the globally installed npm packages
     nodejs \
     # Cleanup in the same layer to reduce image size
@@ -96,6 +100,3 @@ EXPOSE ${PORT}
 # Run as a non-root user for better security
 RUN useradd -m appuser && chown -R appuser:appuser /app
 USER appuser
-
-# Start the application with PORT from environment variable
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT} 

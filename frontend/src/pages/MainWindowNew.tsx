@@ -13,7 +13,7 @@ import AgentStatusIndicator from '../components/AgentStatusIndicator';
 // Hooks
 import { useMainWindowHooks } from '../hooks';
 import { useAuth } from '../auth/AuthContext';
-import api from '../services/api';
+import { api } from '../services/api';
 import { Message } from '../types/types';
 import useMessageDatabaseUtils from '../hooks/conversation/messageDatabaseUtils';
 import { FileAttachment } from '../hooks/conversation/types';
@@ -66,6 +66,7 @@ interface MCPErrorData {
 const NAVBAR_HEIGHT = 64;
 
 const MainWindowNew: React.FC = () => {
+  console.log('[MainWindowNew] component mounted');
   const theme = useTheme();
   const { conversation, file, network } = useMainWindowHooks();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -552,16 +553,15 @@ const MainWindowNew: React.FC = () => {
     if (files && files.length > 0) {
       console.log(`[MainWindowNew] Uploading ${files.length} files for message ${userMessageId} with queryId ${queryId}`);
       const uploadPromises = files.map((file, index) => 
-        api.uploadFile(file, queryId, userMessageId)
-          .then((uploadResponse: { data: { id: string, url?: string } }) => {
-            const fileData = uploadResponse.data;
-            const realFileId = fileData.id;
+        api.uploadFile(file, { query_id: queryId, message_id: userMessageId })
+          .then((uploadResponse: { id: string, url?: string }) => {
+            const realFileId = uploadResponse.id;
             console.log(`[MainWindowNew] Upload success for ${file.name}: ${realFileId}`);
             const updatedAttachment: FileAttachment = {
               // Use the initial temporary attachment as base
               ...fileAttachments[index], 
               id: realFileId, 
-              url: fileData.url || `/api/v1/files/${realFileId}/download`,
+              url: uploadResponse.url || `/api/v1/files/${realFileId}/download`,
               isUploading: false,
               status: 'completed',
               isActive: true,

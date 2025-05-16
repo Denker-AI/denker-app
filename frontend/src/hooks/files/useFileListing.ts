@@ -40,6 +40,7 @@ export const useFileListing = () => {
    * @returns Array of files
    */
   const loadFiles = useCallback(async () => {
+    console.log('[useFileListing] loadFiles called. Current loadState:', state.loadState);
     // Skip loading if already in progress
     if (state.loadState === FileLoadState.LOADING) {
       return files;
@@ -51,10 +52,10 @@ export const useFileListing = () => {
     });
 
     try {
-      const response = await api.getFilesWithRetry();
+      const filesArray = await api.getFilesWithRetry();
       
       // Transform API response to match store format
-      const filesData = response.data.map((file: any) => ({
+      const filesData = filesArray.map((file: any) => ({
         id: file.id,
         filename: file.filename,
         fileType: file.file_type,
@@ -90,7 +91,9 @@ export const useFileListing = () => {
 
   // Load files on mount if not already initialized
   useEffect(() => {
+    console.log('[useFileListing] Mount effect. isInitialized:', isInitialized);
     if (!isInitialized) {
+      console.log('[useFileListing] Mount effect: Calling loadFiles.');
       loadFiles();
     }
   }, [isInitialized, loadFiles]);
@@ -101,9 +104,11 @@ export const useFileListing = () => {
   useEffect(() => {
     // Skip if not initialized
     if (!isInitialized) return;
+    console.log('[useFileListing] Refresh interval setup.');
 
     // Refresh every 30 seconds
     const intervalId = setInterval(() => {
+      console.log('[useFileListing] Interval: Calling loadFiles.');
       loadFiles().catch(err => {
         console.error('Error refreshing files:', err);
       });

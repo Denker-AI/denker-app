@@ -13,6 +13,7 @@ Agent selection behavior:
 
 import logging
 import time
+import json
 from typing import Dict, Any, List, Optional, Callable, Union
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,7 @@ from mcp_agent.workflows.orchestrator.orchestrator import Orchestrator
 from mcp_agent.workflows.router.router_llm import LLMRouter
 from mcp_agent.workflows.router.router_llm_anthropic import AnthropicLLMRouter
 from mcp_agent.workflows.llm.augmented_llm_anthropic import AnthropicAugmentedLLM
+from mcp_agent.workflows.llm.augmented_llm import RequestParams
 from .coordinator_agents_config import DEFAULT_MODEL
 
 logger = logging.getLogger(__name__)
@@ -99,6 +101,78 @@ def extract_query_for_router(processed_message):
     # Join all text with line breaks
     return "\n".join(extracted_text)
 
+# --- ADDED: Helper function to extract a focused objective for the orchestrator ---
+def extract_objective_for_orchestrator(request: AgentRequest, logger: logging.Logger, query_id: str) -> str:
+    """
+    Extracts a focused objective string for the orchestrator's planner.
+    - For new queries, it uses the content of request.processed_message.
+    - For clarification responses, it uses the content of the last few history messages.
+    - Appends file context information if available.
+    """
+    objective_parts = []
+    source_description = "" # For logging
+
+    if request.processed_message and request.processed_message.get('content'):
+        source_description = "current request.processed_message"
+        logger.info(f"[{query_id}] Orchestrator Objective: Extracting from new query (processed_message).")
+        for block in request.processed_message['content']:
+            if block.get('type') == 'text':
+                objective_parts.append(block.get('text', ''))
+            # Note: We are omitting image block notes for planner_objective for brevity,
+            # assuming file context note is sufficient.
+    elif request.message_history:
+        source_description = "last messages in history (clarification)"
+        logger.info(f"[{query_id}] Orchestrator Objective: Extracting from history (clarification response).")
+        # For a focused objective, let's try with the last user message,
+        # or last 2-3 messages if more context is needed.
+        # Let's start with the last message assuming it's the user's clarification.
+        # If it's an assistant message, we might need to go back further.
+        # A safer bet for clarification might be last 1-3 messages.
+        
+        history_to_consider = request.message_history[-3:] # Take last 3 for broader context
+        
+        for msg in history_to_consider:
+            content = msg.get('content', '')
+            if isinstance(content, str):
+                # If content is a simple string
+                if msg.get('role') == 'user': # Prioritize user content for objective
+                    objective_parts.append(content)
+                else: # Include assistant content more sparingly or not at all for objective
+                    objective_parts.append(f"(Context from assistant: {content[:100]}...)")
+
+            elif isinstance(content, list):
+                # If content is a list of blocks
+                for block in content:
+                    if block.get('type') == 'text':
+                        if msg.get('role') == 'user':
+                             objective_parts.append(block.get('text', ''))
+                        # Optionally, add assistant's text blocks for context too, but keep it concise
+                        # else:
+                        #     objective_parts.append(f"(Context from assistant: {block.get('text', '')[:100]}...)")
+    else:
+        logger.warning(f"[{query_id}] Orchestrator Objective: No processed_message or message_history to extract objective from.")
+        return "" # Return empty if no source
+
+    # Combine parts and clean up
+    planner_objective_text = "\n".join(filter(None, objective_parts)).strip()
+    
+    logger.info(f"[{query_id}] Orchestrator Objective: Text extracted from {source_description} (before file context, first 200 chars): '{planner_objective_text[:200]}...'")
+
+    # Append file context information
+    if request.file_ids and len(request.file_ids) > 0:
+        file_context_note = f"IMPORTANT CONTEXT: This task involves {len(request.file_ids)} file(s). Their IDs are: {', '.join(request.file_ids)}. Ensure the plan utilizes these files appropriately, likely using a 'finder' or similar agent for relevant information."
+        if planner_objective_text:
+            planner_objective_text += "\n\n" + file_context_note
+        else:
+            planner_objective_text = file_context_note
+        logger.info(f"[{query_id}] Orchestrator Objective: Appended file context note for {len(request.file_ids)} files.")
+
+    if not planner_objective_text:
+        logger.error(f"[{query_id}] Orchestrator Objective: Resulting planner_objective_text is empty after extraction from {source_description}.")
+        
+    return planner_objective_text
+# --- END ADDED helper function ---
+
 async def process_orchestrator_workflow(
     request: AgentRequest,
     query_id: str,
@@ -171,65 +245,73 @@ async def process_orchestrator_workflow(
             
         # Explicitly set the model for the orchestrator's planner LLM to override model selection
         if hasattr(orchestrator, 'planner') and orchestrator.planner is not None:
+            ORCHESTRATOR_PLANNER_MODEL = "claude-3-5-haiku-20241022" # Defaulting to Haiku as per user's file state
             if not hasattr(orchestrator.planner, 'default_request_params') or orchestrator.planner.default_request_params is None:
-                orchestrator.planner.default_request_params = RequestParams(model=DEFAULT_MODEL)
+                orchestrator.planner.default_request_params = RequestParams(model=ORCHESTRATOR_PLANNER_MODEL, maxTokens=4096)
             else:
-                orchestrator.planner.default_request_params.model = DEFAULT_MODEL
-            logger.info(f"Set orchestrator planner LLM model to {DEFAULT_MODEL}")
-        
-        # Use the processed_message directly from the request
-        if not request.processed_message:
-            logger.error("No processed_message found in request! This is required for the orchestrator workflow.")
-            # --- MODIFIED: Allow missing processed_message if history exists (clarification case) --- 
-            if not request.message_history:
-                # Only return error if BOTH are missing
-                return AgentResponse(
-                    session_id=query_id,
-                    result="Error: Missing processed message and history. Please try again.",
-                    workflow_type=workflow_type,
-                    completion_time=time.time() - start_time
-                )
-            else:
-                 logger.info("Proceeding with orchestrator using message history (clarification response)." )
-            # --- END MODIFIED ---
-        
-        # --- MODIFIED: Construct full message list considering clarification --- 
-        history = request.message_history or []
-        history_for_llm = history
-        
-        if request.processed_message:
-            current_message = request.processed_message
-            history_for_llm = history # Normal case
-        elif history:
-            current_message = history[-1] # Clarification answer
-            history_for_llm = history[:-1] # History before answer
-        else:
-            current_message = None
-            history_for_llm = []
-        
-        # Ensure the current message is not None before appending
-        full_messages = history_for_llm + ([current_message] if current_message else []) 
-        if not full_messages:
-             logger.error("Cannot run orchestrator: No messages constructed.")
-             return AgentResponse(
+                orchestrator.planner.default_request_params.model = ORCHESTRATOR_PLANNER_MODEL
+                orchestrator.planner.default_request_params.maxTokens = 4096
+            logger.info(f"Set orchestrator's internal planner LLM to use model: {ORCHESTRATOR_PLANNER_MODEL}")
+            logger.warning(f"Ensure model {ORCHESTRATOR_PLANNER_MODEL} supports the max_tokens (e.g., 4096) passed by the Orchestrator class.")
+
+        # --- MODIFIED: Use the new helper function to get a focused objective --- 
+        planner_objective_text = extract_objective_for_orchestrator(request, logger, query_id)
+
+        if not planner_objective_text:
+            logger.error(f"[{query_id}] Orchestrator: planner_objective_text is empty. Cannot proceed.")
+            return AgentResponse(
                 session_id=query_id,
-                result="Error: Could not construct messages for orchestrator.",
+                result="Error: Could not derive a valid objective for the orchestrator planner.",
                 workflow_type=workflow_type,
                 completion_time=time.time() - start_time
-             )
-             
-        if len(history_for_llm) > 0:
-            logger.info(f"Prepended {len(history_for_llm)} history messages to the current request for orchestrator.")
+            )
+        logger.info(f"[{query_id}] Orchestrator: Using focused objective for planner (first 100 chars): '{planner_objective_text[:100]}...'")
+        # --- END MODIFIED --- 
+
+        # --- ADDED: Log Orchestrator's internal agents and their LLM status ---
+        if orchestrator and hasattr(orchestrator, 'agents') and isinstance(orchestrator.agents, dict):
+            logger.info(f"[{query_id}] Orchestrator Pre-Execution Check: Orchestrator has {len(orchestrator.agents)} agents configured: {list(orchestrator.agents.keys())}")
+            for agent_name, agent_instance in orchestrator.agents.items():
+                llm_status = "LLM MISSING or UNKNOWN TYPE"
+                if hasattr(agent_instance, 'augmented_llm') and agent_instance.augmented_llm is not None:
+                    llm_type = type(agent_instance.augmented_llm).__name__
+                    actual_llm_inside_guard = None
+                    guarded_llm_model = "N/A"
+
+                    if llm_type == "SemaphoreGuardedLLM" and hasattr(agent_instance.augmented_llm, 'llm'):
+                         actual_llm_inside_guard = agent_instance.augmented_llm.llm
+                         if hasattr(actual_llm_inside_guard, 'default_request_params') and actual_llm_inside_guard.default_request_params:
+                             guarded_llm_model = actual_llm_inside_guard.default_request_params.model
+                         llm_status = f"LLM Present (SemaphoreGuardedLLM wrapping {type(actual_llm_inside_guard).__name__} using model '{guarded_llm_model}')"
+                    elif hasattr(agent_instance.augmented_llm, 'default_request_params') and agent_instance.augmented_llm.default_request_params:
+                        guarded_llm_model = agent_instance.augmented_llm.default_request_params.model
+                        llm_status = f"LLM Present ({llm_type} using model '{guarded_llm_model}')"
+                    else:
+                        llm_status = f"LLM Present ({llm_type}), but model unknown or default_request_params not set."
+                logger.info(f"[{query_id}] Orchestrator Agent Check: '{agent_name}' -> {llm_status}")
+        else:
+            logger.error(f"[{query_id}] Orchestrator Pre-Execution Check: Orchestrator object or its 'agents' attribute is missing/invalid.")
+        # --- END ADDED ---
+
+        # The old logic for constructing full_messages and then extracting from it is now replaced by the call above.
+        
+        # --- MODIFIED: Define and pass specific RequestParams to orchestrator.generate_str ---
+        orchestrator_call_params = RequestParams(
+            model="claude-3-7-sonnet-latest",
+            maxTokens=4096,
+            use_history=False # Orchestrator's generate method itself does not use history for planning
+        )
+        logger.info(f"[{query_id}] Orchestrator: About to call orchestrator.generate_str with objective (first 50 chars): '{planner_objective_text[:50]}...'")
+        logger.info(f"[{query_id}] Orchestrator: RequestParams for this call: model='{orchestrator_call_params.model}', maxTokens={orchestrator_call_params.maxTokens}, use_history={orchestrator_call_params.use_history}")
+
+        # Process the request with the orchestrator using the extracted text and specific params
+        result = await orchestrator.generate_str(
+            planner_objective_text,
+            request_params=orchestrator_call_params
+        )
+        logger.info(f"[{query_id}] Orchestrator: orchestrator.generate_str call COMPLETED.")
+        logger.info(f"[{query_id}] Orchestrator: Final result from orchestrator (first 200 chars): {str(result)[:200]}...")
         # --- END MODIFIED ---
-        
-        # Add file IDs information to message if available
-        if request.file_ids and len(request.file_ids) > 0:
-            logger.info(f"Request includes {len(request.file_ids)} file IDs for context")
-            # File IDs are already included in the processed message
-        
-        # Process the request with the orchestrator
-        # <<< This now uses the correctly constructed full_messages list >>>
-        result = await orchestrator.generate_str(full_messages)
         
         # Calculate completion time
         completion_time = time.time() - start_time

@@ -1,133 +1,102 @@
-import axios, { AxiosInstance, AxiosResponse, CreateAxiosDefaults } from 'axios';
-import type { IntentionRequest, IntentionResponse } from '../types/types';
-import { CircuitBreaker } from './circuitBreaker';
+import { fetchWithAuth } from '../utils/apiClient';
 
-// Initialize circuit breaker
-const circuitBreaker = new CircuitBreaker({
-  failureThreshold: 5,
-  resetTimeout: 30000
-});
-
-// Expose the circuit breaker reset function globally
-// @ts-ignore - Add to window object
-window.resetCircuitBreaker = () => {
-  console.log('Manual circuit breaker reset triggered');
-  circuitBreaker.forceReset();
-};
-
-// Define custom API interface extending AxiosInstance
-interface CustomAPI extends AxiosInstance {
-  processMCPCoordinator: (data: any) => Promise<AxiosResponse>;
-  checkCoordinatorStatus: (queryId: string) => Promise<AxiosResponse>;
-  uploadFile: (formData: FormData, config?: any) => Promise<AxiosResponse>;
-  sendMessage: (text: string, conversationId: string, attachments?: any[]) => Promise<AxiosResponse>;
+// Helper to handle fetchWithAuth responses
+async function handleResponse(response: Response) {
+  if (!response.ok) {
+    let errorMsg = `API Error: ${response.status}`;
+    try {
+      const data = await response.json();
+      errorMsg = data.message || errorMsg;
+    } catch {}
+    throw new Error(errorMsg);
+  }
+  // If no content
+  if (response.status === 204) return null;
+  return response.json();
 }
 
-// Define the base URL constant for clarity
-const getApiBaseUrl = () => {
-  // Check if in Electron context
-  if (window.electron) {
-    // Use Electron's environment variables
-    return window.electron.getEnvVars().VITE_API_URL;
-  }
-  // Fallback to Vite env vars or default
-  return import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
-};
-
-// Create axios instance with type declaration for custom methods
-const api = axios.create({
-  baseURL: getApiBaseUrl(), // Use the dynamic function
-  headers: {
-    'Content-Type': 'application/json',
+export const api = {
+  // Conversations
+  getConversations: async () => {
+    const res = await fetchWithAuth('/conversations/list');
+    return handleResponse(res);
   },
-  timeout: 15000, // 15 seconds timeout
-}) as CustomAPI;
-
-// Add coordinator endpoint to the axios instance
-api.processMCPCoordinator = (data: any) => {
-  // Increase timeout specifically for the coordinator endpoint
-  return api.post('/agents/coordinator/mcp-agent', data, {
-    timeout: 60000 // 60 seconds timeout for this specific endpoint
-  });
-};
-
-// Add coordinator status check method
-api.checkCoordinatorStatus = (queryId: string) => {
-  return api.get(`/agents/status/${queryId}`);
-};
-
-// Add file upload method
-api.uploadFile = (formData: FormData, config?: any) => {
-  return api.post('/files/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-    ...config
-  });
-};
-
-// Add sendMessage method CORRECTLY using the api instance
-api.sendMessage = (text: string, conversationId: string, attachments: any[] = []) => {
-  // Use the 'api' instance which has the baseURL configured
-  return api.post(`/conversations/${conversationId}/messages`, {
-    content: text,
-    role: 'user', // Assuming messages sent via this are always from the user
-    attachments: attachments
-  });
-};
-
-// Add request interceptor for circuit breaker
-api.interceptors.request.use(
-  async (config) => {
-    // If circuit is open, reject the request
-    if (circuitBreaker.check()) {
-      console.log('Circuit breaker: blocking request to', config.url);
-      return Promise.reject(new Error('Circuit is open - API is currently unavailable'));
+  createConversation: async (data: any) => {
+    const res = await fetchWithAuth('/conversations/new', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+  getConversation: async (id: string, params?: { limit?: number; before_message_id?: string }) => {
+    let url = `/conversations/${id}`;
+    if (params) {
+      const q = new URLSearchParams(params as any).toString();
+      url += `?${q}`;
     }
-    
-    // --- MODIFIED: Get token via IPC ---
-    try {
-      const token = await window.electron?.getAccessToken(); 
-      if (token) {
-        console.log(`[API Interceptor] Adding token to ${config.method?.toUpperCase()} ${config.url}`);
-        config.headers.Authorization = `Bearer ${token}`;
-      } else {
-        console.warn(`[API Interceptor] No token available for ${config.method?.toUpperCase()} ${config.url}. Request may fail.`);
-        // If the request requires auth and there's no token, the backend should return 401.
-        // Remove any potentially stale Authorization header
-        delete config.headers.Authorization;
-      }
-    } catch (error) {
-      console.error('[API Interceptor] Error getting access token via IPC:', error);
-      // Proceed without token, let backend handle potential 401
-      delete config.headers.Authorization;
+    const res = await fetchWithAuth(url);
+    return handleResponse(res);
+  },
+  updateConversation: async (id: string, data: any) => {
+    const res = await fetchWithAuth(`/conversations/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+  deleteConversation: async (id: string) => {
+    const res = await fetchWithAuth(`/conversations/${id}`, {
+      method: 'DELETE',
+    });
+    return handleResponse(res);
+  },
+  addMessage: async (conversationId: string, data: any) => {
+    const res = await fetchWithAuth(`/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+  sendMessage: async (text: string, conversationId: string, attachments: any[] = []) => {
+    const res = await fetchWithAuth(`/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      body: JSON.stringify({ content: text, role: 'user', attachments }),
+    });
+    return handleResponse(res);
+  },
+  // Coordinator endpoints
+  processMCPCoordinator: async (data: any) => {
+    const res = await fetchWithAuth('/agents/coordinator/mcp-agent', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleResponse(res);
+  },
+  checkCoordinatorStatus: async (queryId: string) => {
+    const res = await fetchWithAuth(`/agents/status/${queryId}`);
+    return handleResponse(res);
+  },
+  // File endpoints
+  uploadFile: async (file: File, additionalData = {}) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    Object.entries(additionalData).forEach(([key, value]) => {
+      formData.append(key, String(value));
+    });
+    const res = await fetchWithAuth('/files/upload', {
+      method: 'POST',
+      body: formData,
+    });
+    return handleResponse(res);
+  },
+  getFiles: async (params?: any) => {
+    let url = '/files/list';
+    if (params) {
+      const q = new URLSearchParams(params as any).toString();
+      url += `?${q}`;
     }
-    // --- END MODIFICATION ---
-    
-    return config;
+    const res = await fetchWithAuth(url);
+    return handleResponse(res);
   },
-  (error) => {
-    // Do something with request error
-    return Promise.reject(error);
-  }
-);
-
-// Add response interceptor for circuit breaker
-api.interceptors.response.use(
-  (response) => {
-    // On successful response, record success
-    circuitBreaker.success();
-    return response;
-  },
-  (error) => {
-    // On failure, record failure
-    circuitBreaker.failure();
-    return Promise.reject(error);
-  }
-);
-
-// Enhanced API hook with retry logic for coordinator status
-export const useEnhancedApi = () => {
-  // ... rest of file ...
+  // Add more endpoints as needed
 };
-
-// Export the configured api instance directly
-export default api;

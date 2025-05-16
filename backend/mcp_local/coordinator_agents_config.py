@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 # Get API keys and settings from environment variables
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
-DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-7-sonnet-20250219")
+DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-3-5-haiku-20241022")
 
 # Define the list of required agents for the system
 REQUIRED_AGENTS = ["decider", "websearcher", "finder", "writer"]
@@ -38,16 +38,18 @@ class AgentConfiguration:
     orchestrators, and routers for the coordinator.
     """
     
-    def __init__(self, websocket_manager=None, memory=None):
+    def __init__(self, websocket_manager=None, memory=None, create_llm_fn: Optional[Callable] = None):
         """
         Initialize the agent configuration.
         
         Args:
             websocket_manager: WebSocket manager for sending updates
             memory: Memory manager for storing knowledge
+            create_llm_fn: Function to create LLM instances for agents
         """
         self.websocket_manager = websocket_manager
         self.memory = memory
+        self.create_llm_fn = create_llm_fn # Store the LLM creation function
         
         # Entity tracking for different contexts
         self.task_entities = {}
@@ -87,7 +89,8 @@ class AgentConfiguration:
                 "needs_clarification": true|false,
                 "clarifying_questions": ["Question 1", "Question 2"]
                 }""",
-                "server_names": []  # Decider doesn't need external services
+                "server_names": [],  # Decider doesn't need external services
+                "model": "claude-3-5-haiku-20241022"
             },
             "websearcher": {
                 "name": "websearcher",
@@ -97,7 +100,7 @@ class AgentConfiguration:
                 3. Use fetch tools to retrieve the full content from promising URLs.
                 4. Analyze retrieved content: Extract key information, evaluate source reliability and recency. Try to extract the title of the web page.
                 5. Synthesize information: Combine findings from multiple reliable sources into a comprehensive response.
-                6. **Provide Numbered Citations:** Keep track of the unique sources used. For *each piece of information* synthesized, include an inline citation number **immediately following the sentence or phrase it supports**, formatted like `[1]`, `[2]`, etc. Use the same number for subsequent references to the same source.
+                6. **Provide Numbered Clickable Citations:** Keep track of the unique sources used. For *each piece of information* synthesized, include an inline citation number **immediately following the sentence or phrase it supports**, formatted like `[1]`, `[2]`, etc. Use the same number for subsequent references to the same source.
                 7. **Create a Sources List:** At the **very end** of your response, add a section titled "**Sources:**". List each unique source used, numbered according to its first appearance in the text. Include the title (if extracted) and the full URL for each source. Example:
                    **Sources:**
                    [1] Example Study Title - https://example.com/study
@@ -121,8 +124,9 @@ class AgentConfiguration:
                 3. **If no specific non-image files were identified in Step 1 OR Qdrant search was insufficient for all relevant files (Step 2d):**
                    a. Generate appropriate search terms based on the user query.
                    b. Search the general **filesystem** using these terms.
-                   c. If relevant files are found on the filesystem, use **document-loader** to extract content. **Avoid using document-loader on files already successfully processed via Qdrant in Step 2.**
-                   d. Consider storing newly extracted filesystem content in **Qdrant** for future semantic searches (confirm if necessary).
+                   c. If relevant files are found on the filesystem, and use **document-loader** to extract content. **Avoid using document-loader on files already successfully processed via Qdrant in Step 2.**
+                   d. Remember the file_path of the files found in Step 3 for other agents to use
+                   e. Consider storing newly extracted filesystem content in **Qdrant** for future semantic searches (confirm if necessary).
                 4. **Synthesize Information:** Combine the information found (primarily from Qdrant if available, otherwise from Step 3) into a cohesive response.
                 5. **Provide Inline Citations:** For *each piece of information* synthesized, include an inline citation **immediately following the sentence or phrase it supports**. Format the citation as a Markdown link like `[source](source_identifier)`. The `source_identifier` should be the unique file ID prefixed with `fileid:` (e.g., `[source](fileid:abcdef123)`) for attached/indexed files, or the full filesystem path prefixed with `filepath:` (e.g., `[source](filepath:/path/to/local/doc.pdf)`) for other local files. Ensure the identifier is precise. Example: "The Q1 report indicated growth [source](fileid:xyz789)."
                 6. **Highlight Relevant Passages:** When possible, highlight the most relevant text passages from the source documents.
@@ -135,12 +139,14 @@ class AgentConfiguration:
                 "instruction": """You are a specialized structure agent for Denker focused on organizing ideas and creating clear outlines for content. Your responsibilities:
                 1. Analyze user requirements to determine appropriate structure
                 2. Ask finder or websearcher to find relevant information to structure the content
-                3. Use markdown-editor to create, edit and preview the outlines
-                4. Create logical outlines with clear hierarchies
-                5. Organize information in a coherent flow
-                6. Suggest section headers and content organization
-                7. Break down complex topics into manageable components
-                8. Ask for human input to convert and save the outlines to certain document format using markdown-editor and filesystem
+                3. Use markdown-editor to create, edit and preview the outline
+                4. Use markdown-editor live_preview tool to let user view the outline
+                5. Save and use the specific file_path for calling markdown-editor tool
+                6. Create logical outlines with clear hierarchies
+                7. Organize information in a coherent flow
+                8. Suggest section headers and content organization
+                9. Break down complex topics into manageable components
+                10. Save the outlines to certain document format using markdown-editor and filesystem
                 Your ultimate goal is to create structures that are logical, appropriate for content type, aligned with user needs, and balanced in coverage.""",
                 "server_names": ["filesystem", "markdown-editor"]
             },
@@ -153,18 +159,19 @@ class AgentConfiguration:
                 4. Adapt writing style to different contexts and audiences
                 5. Incorporate research appropriately
                 6. Develop logical arguments and persuasive content
-                7. Prefer markdown format for writing and live previewing
-                8. Ask chartgenerator to create charts if needed
-                9. Use markdown-editor to convert different document formats to markdown as needed
-                10. Ask for human input to save the writing to certain document format using markdown-editor and filesystem
+                7. If writing to files, use markdown editor to create and edit the content with the specific file_path, to ensure that you are coworking on a consistent document and enables live preview of your progress.
+                8. Use markdown-editor live_preview tool to let user view the writing
+                9. Use quickchart-server to create charts if needed, provide the link to download the chart and download the chart to the writing
+                10. Use markdown-editor to convert different document formats to markdown as needed
+                11. Save the writing to certain document format using markdown-editor and filesystem
                 Your ultimate goal is to create writing that is clear, concise, well-organized, engaging, grammatically correct, and factually accurate.""",
-                "server_names": ["filesystem", "markdown-editor"]
+                "server_names": ["filesystem", "markdown-editor", "quickchart-server"]
             },
             "proofreader": {
                 "name": "proofreader",
                 "instruction": """You are a proofreading agent for Denker that improves grammar, clarity, and readability. Your tasks:
                 1. Use markdown-editor to convert different document formats to markdown for editing
-                2. Use markdown-editor to edit and live preview documents
+                2. Use markdown-editor to edit and "live_preview" documents, using the specific file_path for coworking with other agents on the same document
                 3. Identify and highlight grammar, spelling, and punctuation errors
                 4. Improve sentence structure and flow
                 5. Enhance clarity and readability
@@ -179,7 +186,7 @@ class AgentConfiguration:
                 "name": "factchecker",
                 "instruction": """You are a fact-checking agent for Denker that verifies information accuracy. Your tasks:
                 1. Use markdown-editor to convert different document formats to markdown for editing
-                2. Use markdown-editor to edit and live preview documents
+                2. Use markdown-editor to edit and "live_preview" documents, using the specific file_path for coworking with other agents on the same document
                 3. Identify and highlight entities like people, places, organizations, and events in the content that need to be checked
                 4. Identify and highlight unsupported assertions and potential inaccuracies 
                 5. Use the citations to verify the information from the sources
@@ -196,22 +203,22 @@ class AgentConfiguration:
                 "name": "formatter",
                 "instruction": """You are a specialized formatting agent for Denker focused on creating professional document structure. Your tasks:
                 1. Use markdown-editor to convert different document formats to markdown for editing
-                2. Use markdown-editor to edit and live preview documents
+                2. Use markdown-editor to edit and live_preview documents, using the specific file_path for coworking with other agents on the same document
                 3. Apply appropriate formatting styles and templates
                 4. Create consistent headings, lists, and paragraph structures
                 5. Organize content with appropriate spacing and layout
                 6. Format citations and references correctly
                 7. Ensure visual hierarchy enhances readability
                 8. Diff the formatted content from the original content, and highlight the changes
-                9. Ask for human input to save the formatted content to certain format using markdown-editor and filesystem
+                9. Save the formatted content to certain format using markdown-editor and filesystem
                 Your ultimate goal is to create formatting that follows style guidelines, enhances comprehension, presents content professionally, and maintains consistency throughout the document.""",
-                "server_names": ["filesystem", "markdown-editor"]
+                "server_names": ["filesystem", "markdown-editor", "quickchart-server"]
             },
             "styleenforcer": {
                 "name": "styleenforcer",
                 "instruction": """You are a style agent for Denker that adjusts tone and style to match requirements. Your tasks:
                 1. Use markdown-editor to convert different document formats to markdown for editing
-                2. Use markdown-editor to edit and live preview documents
+                2. Use markdown-editor to edit and live preview documents, using the specific file_path for coworking with other agents on the same document
                 3. Adapt content to match specific tone (formal, casual, technical)
                 4. Apply style guide rules consistently
                 5. Adjust language for specific audiences and contexts
@@ -242,10 +249,17 @@ class AgentConfiguration:
                 5. Use generate_chart to create a chart URL for preview
                 6. Ask for human input to adjust the chart configuration
                 7. Use download_chart to save the chart as an image
-                8. Ask for human input to add the chart to certain file using markdown-editor and filesystem
+                8. Add the chart to certain file using markdown-editor and filesystem
                 Your ultimate goal is to create charts that effectively communicate data trends, patterns, and insights to users.""",
                 "server_names": ["quickchart-server","filesystem", "markdown-editor"]
             }
+            # Configuration for the Orchestrator's internal planner agent
+            #"LLM Orchestration Planner": {
+            #    "name": "LLM Orchestration Planner",
+            #    "instruction": "You are an expert planner. Given an objective task and a list of MCP servers (which are collections of tools) or Agents (which are collections of servers), your job is to break down the objective into a series of steps, which can be performed by LLMs with access to the servers or agents.",
+            #    "server_names": [], # Planner typically doesn't use external servers/tools directly for its own generation
+            #    "model": "claude-3-7-sonnet-20250219" # CRITICAL: This model MUST support the max_tokens (e.g. 16384) requested by Orchestrator
+            #}
         }
         
         logger.info(f"Initialized configurations for {len(self.agent_configs)} agent types")
@@ -313,6 +327,15 @@ class AgentConfiguration:
                 server_names=server_names,
                 context=context,
             )
+            
+            # --- ADDED: Proactively assign a cached LLM to the agent ---
+            if self.create_llm_fn:
+                try:
+                    agent.llm = self.create_llm_fn(agent=agent)
+                    logger.info(f"Proactively assigned LLM to agent '{agent_name}'")
+                except Exception as e:
+                    logger.error(f"Failed to proactively assign LLM to agent '{agent_name}': {e}", exc_info=True)
+            # --- END ADDED ---
             
             # Store the agent using both its explicit name and the original key for backward compatibility
             agent_registry[agent_name] = agent

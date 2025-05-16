@@ -5,7 +5,8 @@ import { useEnhancedApi } from '../api';
 import { 
   ConversationLoadState, 
   ConversationState, 
-  ConversationListItem 
+  ConversationListItem,
+  Conversation
 } from './types';
 
 /**
@@ -13,6 +14,7 @@ import {
  * Handles loading, creating, and deleting conversations.
  */
 export const useConversationList = () => {
+  console.log('[useConversationList] hook mounted');
   // State for conversation list operations
   const [state, setState] = useState<ConversationState>({
     loadState: ConversationLoadState.IDLE,
@@ -61,10 +63,10 @@ export const useConversationList = () => {
     try {
       // Try to load conversations with retry
       const response = await api.getConversationsWithRetry();
-      console.log('Loaded conversations from API:', response.data);
+      console.log('Loaded conversations from API:', response);
       
       // Transform API response to match our store format
-      const conversationsData = response.data.map((conv: any) => {
+      const conversationsData = response.map((conv: any) => {
         // Convert UTC timestamps to local time
         const createdAt = new Date(conv.created_at);
         const updatedAt = new Date(conv.updated_at);
@@ -123,12 +125,12 @@ export const useConversationList = () => {
         title
       });
       
-      if (!response || !response.data) {
+      if (!response || !response.id) {
         throw new Error('Failed to create conversation: empty response');
       }
       
       // Use the ID returned from the server
-      const conversationId = response.data.id;
+      const conversationId = response.id;
       console.log('Created conversation with server ID:', conversationId);
       
       const newConversation: Conversation = {
@@ -144,8 +146,8 @@ export const useConversationList = () => {
             metadata: {}
           }
         ],
-        createdAt: new Date(response.data.created_at) || new Date(),
-        updatedAt: new Date(response.data.updated_at) || new Date(),
+        createdAt: new Date(response.created_at) || new Date(),
+        updatedAt: new Date(response.updated_at) || new Date(),
         isActive: true
       };
       
@@ -273,7 +275,9 @@ export const useConversationList = () => {
   
   // Initialize conversations on mount, but only if not already initialized
   useEffect(() => {
+    console.log('[useConversationList] useEffect triggered. isInitialized:', isInitialized, 'isOnline:', isOnline);
     if (!isInitialized && isOnline) {
+      console.log('[useConversationList] Calling loadConversations');
       loadConversations();
     }
   }, [isInitialized, isOnline, loadConversations]);

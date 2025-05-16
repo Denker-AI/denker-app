@@ -147,7 +147,7 @@ export const useAgentWebSocket = (queryId: string, conversationId?: string) => {
       return; // Don't proceed if no queryId
     }
 
-    const connectWebSocket = () => {
+    const connectWebSocket = async () => {
       // Double check queryId exists before proceeding
       if (!queryId) {
         console.log('connectWebSocket called without queryId, aborting.');
@@ -183,30 +183,26 @@ export const useAgentWebSocket = (queryId: string, conversationId?: string) => {
 
         // Create WebSocket connection URL
         let wsBaseUrl;
-        // Check if in Electron context
-        if (window.electron) {
-          // Use Electron's environment variables
-          wsBaseUrl = window.electron.getEnvVars().VITE_WS_URL;
+        if (import.meta.env.DEV) {
+          wsBaseUrl = 'ws://localhost:8001';
         } else {
-          // Fallback to Vite env vars
-          wsBaseUrl = import.meta.env.VITE_WS_URL;
-          if (!wsBaseUrl) {
-            // Convert API URL to WS URL if WS URL not provided
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
-            wsBaseUrl = apiUrl.replace(/^http/, 'ws').replace(/\/api\/v1\/?$/, '');
-          }
+          // IMPORTANT: Replace this with your actual production WebSocket URL
+          wsBaseUrl = import.meta.env.VITE_WS_URL_PROD || 'wss://your-prod-ws.denker.ai';
         }
+        console.log('[WebSocket] Determined wsBaseUrl:', wsBaseUrl, '(Dev mode:', import.meta.env.DEV+')');
 
         let endpoint = `/api/v1/agents/ws/mcp-agent/${queryId}`;
         if (conversationId) {
           endpoint += `?conversation_id=${conversationId}`;
         }
-        const wsEndpoint = wsBaseUrl + endpoint;
         
-        console.log(`Connecting to WebSocket endpoint: ${wsEndpoint}`);
+        console.log('[WebSocket] Final wsBaseUrl before combining:', wsBaseUrl);
+        console.log('[WebSocket] Final endpoint before combining:', endpoint);
+        const fullWsUrl = `${wsBaseUrl}${endpoint}`;
+        console.log(`[WebSocket] Connecting to: ${fullWsUrl}`);
         
         // Create the WebSocket instance
-        const wsInstance = new WebSocket(wsEndpoint);
+        const wsInstance = new WebSocket(fullWsUrl);
         currentWsInstance = wsInstance; // Track the instance for this effect scope
         activeWebSockets[queryId] = wsInstance; // Store globally
         if (isMounted.current) setSocket(wsInstance); // Update state if mounted

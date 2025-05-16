@@ -192,7 +192,7 @@ export const useMessageSender = () => {
             console.log(`Uploading file ${file.name} for message ${userMessageId} with queryId ${currentQueryId}`);
             const uploadResponse = await api.uploadFileWithRetry(file, currentQueryId, userMessageId);
             // --- END MODIFICATION ---
-            const fileData = uploadResponse.data;
+            const fileData = uploadResponse;
 
             // Update the temporary file with real data
             const updatedFileAttachment = {

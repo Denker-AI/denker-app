@@ -22,7 +22,7 @@ async def list_conversations(
     db: Session = Depends(get_db)
 ):
     """
-    List all conversations for the current user
+    List all conversations for the current user, excluding soft-deleted ones.
     """
     conversation_repo = ConversationRepository(db)
     conversations = conversation_repo.get_by_user(current_user.id)
@@ -34,7 +34,7 @@ async def list_conversations(
             "created_at": conv.created_at,
             "updated_at": conv.updated_at
         }
-        for conv in conversations
+        for conv in conversations if conv.is_active
     ]
 
 @router.post("/new")
