@@ -128,22 +128,28 @@ export const useUser = () => {
   
   // Update user settings
   const updateUserSettings = useCallback(async (updates: Partial<UserSettings>) => {
-    // REMOVED Auth0 check
+    console.log('[useUser] updateUserSettings: Called with updates:', updates); 
     setIsLoading(true);
     setError(null);
     try {
-      const response = await api.put('/users/settings', updates); // USE api.put directly
-      updateSettings(response.data); // Update store with response
-      return response.data;
+      console.log('[useUser] updateUserSettings: Attempting api.put to /users/settings'); 
+      const response = await api.put('/users/settings', updates);
+      console.log('[useUser] updateUserSettings: api.put successful, response status:', response.status); // Changed log to show status
+      // OPTIMISTIC UPDATE: Use the 'updates' object that was sent to the server
+      // as the backend currently returns undefined for response.data on a 200 OK for this PUT request.
+      updateSettings(updates); // MODIFIED: Use 'updates' instead of response.data
+      // return response.data; // Old line, backend returns undefined here
+      return updates; // MODIFIED: Return the updates we applied
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'Failed to update settings';
+      console.error('[useUser] updateUserSettings: Error during api.put or subsequent logic:', errorMessage, err);
       setError(errorMessage);
-      // Optionally revert or update locally despite error
-      return null;
+      throw err; // Re-throw to allow calling component to handle it if needed
     } finally {
+      console.log('[useUser] updateUserSettings: Finally block, setIsLoading(false)');
       setIsLoading(false);
     }
-  }, [updateSettings]); // REMOVED api, isAuthenticated dependencies
+  }, [updateSettings, setIsLoading, setError]);
   
   // Return the state and functions (remove Auth0 specific ones)
   return {

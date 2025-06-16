@@ -29,6 +29,120 @@ interface ConversationSpecificState {
 }
 // --- END ADDED ---
 
+// ADDED: Utility function to map technical agent names to user-friendly display names
+const getUserFriendlyAgentName = (technicalName: string): string => {
+  // ADDED: Input validation
+  if (!technicalName || typeof technicalName !== 'string') {
+    console.warn(`[getUserFriendlyAgentName] Invalid input: "${technicalName}"`);
+    return 'Agent'; // Fallback for invalid input
+  }
+  // --- END ADDED ---
+  
+  console.log(`[getUserFriendlyAgentName] Input: "${technicalName}"`);
+  
+  // ADDED: Handle MCP agent namespace pattern first
+  // Pattern: mcp_agent.workflows.llm.augmented_llm_anthropic.{agent_name}
+  if (technicalName.includes('mcp_agent.workflows.llm.augmented_llm_anthropic.')) {
+    const agentName = technicalName.split('.').pop(); // Get the last part after the dots
+    console.log(`[getUserFriendlyAgentName] Detected MCP namespace, extracted: "${agentName}"`);
+    if (agentName && agentName !== 'SharedCacheLLMAggregator' && agentName !== 'cachesharedllm') {
+      // This is our agent-specific namespace - use the agent name directly
+      console.log(`[getUserFriendlyAgentName] Using extracted agent name from namespace: ${agentName}`);
+      return getUserFriendlyAgentName(agentName); // Recursively map the extracted agent name
+    }
+  }
+  // --- END ADDED ---
+  
+  const agentNameMappings: { [key: string]: string } = {
+    // Cache and infrastructure names (fallback cases)
+    'SharedCacheLLMAggregator': 'Agent', // ADDED
+    'SharedCacheLLM': 'Agent',
+    'SharedOrchestatorLLM': 'Orchestrator',
+    'SharedOrchestrator': 'Orchestrator',
+    'cachesharedllm': 'Agent', // ADDED lowercase variant
+    
+    // MCP agent client session
+    'mcp_agent_client_session': 'Assistant',
+    
+    // Planner names
+    'StrictLLMOrchestrationPlanner': 'Planning Assistant',
+    'LLM Orchestration Planner': 'Planning Assistant',
+    'LLMOrchestrationPlanner': 'Planning Assistant',
+    
+    // Agent wrapper names
+    'AgentSpecificWrapper': 'Assistant',
+    
+    // Augmented LLM names
+    'AugmentedLLMAnthropic': 'Agent',
+    'augmented_llm_anthropic': 'Agent',
+    'AugmentedLLM': 'Agent',
+    'AnthropicAugmentedLLM': 'Agent',
+    'FixedAnthropicAugmentedLLM': 'Agent',
+    'SemaphoreGuardedLLM': 'Agent',
+    
+    // New consolidated agent names (4-agent system)
+    'decider': 'Decision Agent',
+    'researcher': 'Research Agent',
+    'creator': 'Creator Agent',
+    'editor': 'Editor Agent',
+    
+    // System names
+    'router': 'Router',
+    'orchestrator': 'Orchestrator',
+    'system': 'System',
+    'System': 'System'
+  };
+  
+  // Direct mapping if exists
+  if (agentNameMappings[technicalName]) {
+    return agentNameMappings[technicalName];
+  }
+  
+  // Handle case variations for common agent names
+  const lowerName = technicalName.toLowerCase();
+  for (const [key, value] of Object.entries(agentNameMappings)) {
+    if (key.toLowerCase() === lowerName) {
+      return value;
+    }
+  }
+  
+  // Handle names that contain keywords
+  if (technicalName.toLowerCase().includes('planner')) {
+    return 'Planning Assistant';
+  }
+  if (technicalName.toLowerCase().includes('orchestrat')) {
+    return 'Orchestrator';
+  }
+  if (technicalName.toLowerCase().includes('cache')) {
+    return 'Assistant';
+  }
+  if (technicalName.toLowerCase().includes('shared')) {
+    return 'Assistant';
+  }
+  if (technicalName.toLowerCase().includes('augmented')) {
+    return 'Agent';
+  }
+  if (technicalName.toLowerCase().includes('anthropic')) {
+    return 'Agent';
+  }
+  
+  // Clean up technical names by removing technical suffixes/prefixes
+  let cleanName = technicalName
+    .replace(/^(Shared|Fixed|Semaphore|Guarded|LLM|MCP|Augmented|Anthropic)/, '') // Remove technical prefixes
+    .replace(/(LLM|Wrapper|Agent|Instance|Anthropic)$/, '') // Remove technical suffixes
+    .trim();
+  
+  // If we cleaned everything away, use a fallback
+  if (!cleanName) {
+    cleanName = 'Agent';
+  }
+  
+  // Capitalize first letter
+  const result = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+  console.log(`[getUserFriendlyAgentName] Final result: "${technicalName}" → "${result}"`);
+  return result;
+};
+
 /**
  * Hook for handling real-time updates via WebSocket.
  * Listens for incoming messages and updates the conversation store.
@@ -64,6 +178,11 @@ export const useRealTimeUpdates = () => {
 
   // Per-Conversation State
   const [perConversationState, setPerConversationState] = useState<Record<string, ConversationSpecificState>>({});
+
+  // --- ADDED: Streaming state for handling word-by-word messages ---
+  const [streamingMessages, setStreamingMessages] = useState<Map<string, string>>(new Map());
+  const [streamingMessageIds, setStreamingMessageIds] = useState<Map<string, string>>(new Map()); // Maps streaming key to message ID
+  // --- END ADDED ---
 
   // REMOVED: Old individual state variables
   // const [isAnyQueryProcessing, setIsAnyQueryProcessing] = useState<boolean>(false);
@@ -229,34 +348,9 @@ export const useRealTimeUpdates = () => {
         }
         // --- END Handle non-string ---
 
-        // --- MODIFIED: Extract final text block after the LAST tool call placeholder --- 
-        let formattedContent = rawResultText.trim(); // Default to full trimmed text
-        const toolCallMarker = '[Calling tool';
-        const lastToolCallIndex = rawResultText.lastIndexOf(toolCallMarker);
-
-        if (lastToolCallIndex !== -1) {
-          // Find the end of that specific placeholder line (look for the next ']')
-          const endBracketIndex = rawResultText.indexOf(']', lastToolCallIndex);
-          if (endBracketIndex !== -1) {
-            // Extract everything AFTER the closing bracket of the last tool call
-            const subsequentText = rawResultText.substring(endBracketIndex + 1).trim();
-            if (subsequentText) { // Only use extracted part if it's not empty
-              formattedContent = subsequentText;
-              console.log(`[Result Parse] Extracted final answer after last tool call marker.`)
-            } else {
-              // This case might happen if the result ends exactly with the placeholder
-              console.log(`[Result Parse] Found last tool marker but no non-empty content after it, using full result.`);
-              // Keep the default formattedContent (full text)
-            }
-          } else {
-            // Malformed placeholder? Fallback to full text
-            console.log(`[Result Parse] Found last tool marker but no closing ']', using full result.`);
-          }
-        } else {
-          // No tool calls found in the result string
-          console.log(`[Result Parse] No tool call markers found, using full result.`);
-        }
-        // --- END MODIFIED Extraction --- 
+        // Backend now handles result cleaning, so we just use the result as-is
+        console.log(`[Result Parse] Using backend-cleaned result (first 200 chars): "${rawResultText.substring(0, 200)}..."`);
+        let formattedContent = rawResultText.trim(); 
         
         const messageId = `response_${Date.now()}_${uuidv4().substring(0, 5)}`;
         const targetConversationId = conversationId; 
@@ -281,7 +375,7 @@ export const useRealTimeUpdates = () => {
         await addMessage(targetConversationId, {
           id: messageId, content: formattedContent, role: 'assistant', timestamp: new Date(), metadata // Use safe metadata
         });
-        await saveMessageToDatabase(targetConversationId, formattedContent, 'assistant', metadata); // Use targetConversationId
+        await saveMessageToDatabase(targetConversationId, uuidv4(), formattedContent, 'assistant', metadata); // Use targetConversationId
         console.log('🟨 Message added successfully by processFinalResponse');
         
         doCleanup(); // Cleanup AFTER successful processing
@@ -475,7 +569,7 @@ export const useRealTimeUpdates = () => {
             metadata: { queryId: activeQueryId, isClarificationRequest: true }
         });
         // Save to DB
-        saveMessageToDatabase(conversationId, clarificationMessage, 'assistant', { queryId: activeQueryId, isClarificationRequest: true });
+        saveMessageToDatabase(conversationId, uuidv4(), clarificationMessage, 'assistant', { queryId: activeQueryId, isClarificationRequest: true });
 
         // Update state to indicate waiting and STOP loading
         setPerConversationState(prev => ({
@@ -494,40 +588,208 @@ export const useRealTimeUpdates = () => {
     if (!conversationId) {
         // ADDED: Handle file status updates even if query seems finished
         // (Background task might complete after main flow)
+        if (step.step_type === 'file_processing_wait') {
+            console.log("[useRealTimeUpdates] Handling file_processing_wait:", step);
+            // Use step.message if available, otherwise construct a default one using raw_data.files if present.
+            const statusIndicatorMessage = step.message || `Processing: ${step.raw_data?.files?.join(', ') || 'file(s)'}...`;
+            const agentNameForStatus = step.raw_data?.agent_name || step.raw_data?.agent || 'System'; // Enhanced extraction
+            const friendlyAgentNameForStatus = getUserFriendlyAgentName(agentNameForStatus);
+            setAgentStatus(statusIndicatorMessage, 'status', friendlyAgentNameForStatus);
+            return; // Only update status indicator
+        }
         if (step.step_type === 'file_processed' || step.step_type === 'file_error') {
-          // --- DEBUGGING ADDED ---
-          console.log("[useRealTimeUpdates] Received file status update (after query finished?):", step);
-          // --- END DEBUGGING ---
+          console.log("[useRealTimeUpdates] Received file status update (query may have finished):", step);
           const fileId = step.raw_data?.file_id;
           const status = step.step_type === 'file_processed' ? 'completed' as const : 'error' as const;
           const errorMsg = step.step_type === 'file_error' ? step.message : undefined;
-          const messageId = step.raw_data?.messageId; // Use the messageId from payload
+          const messageIdForAttachment = step.raw_data?.messageId; 
+          const targetConversationIdForAttachment = step.raw_data?.conversationId;
+
+          // Update Agent Status Indicator
+          const statusIndicatorMessage = step.message || 
+            (step.step_type === 'file_processed' ? `File '${step.raw_data?.filename || fileId || 'unknown'}' processed.` :
+            `Error processing file '${step.raw_data?.filename || fileId || 'unknown'}'`);
+          const agentNameForStatus = step.raw_data?.agent_name || step.raw_data?.agent || 'System'; // Enhanced extraction
+          const friendlyAgentNameForStatus = getUserFriendlyAgentName(agentNameForStatus);
+          setAgentStatus(statusIndicatorMessage, 'status', friendlyAgentNameForStatus);
+
           if (fileId) {
-            console.log(`Received file status update: ${fileId} -> ${status}`);
-            // Find the message where the file was originally attached
-            // --- MODIFIED: Use messageId directly --- 
-            const targetConversationId = conversationId; // Get from processingQueriesRef
-            const targetMessageId = messageId; 
-            console.log(`Attempting to update file status for: convId=${targetConversationId}, msgId=${targetMessageId}, fileId=${fileId}`);
-            if (targetMessageId) {
-              // --- DEBUGGING ADDED ---
-              console.log("[useRealTimeUpdates] Calling updateFileAttachmentStatus...", { targetConversationId, targetMessageId, fileId, status, errorMsg });
-              // --- END DEBUGGING ---
-              updateFileAttachmentStatus(targetConversationId, targetMessageId, fileId, status, errorMsg);
-              console.log(`[useRealTimeUpdates] Called updateFileAttachmentStatus for file ${fileId} in message ${targetMessageId}`);
-            } else {
-              console.warn(`[useRealTimeUpdates] Missing messageId in file status update payload for file ${fileId}. Cannot update status.`);
+            let convIdToUpdate = targetConversationIdForAttachment;
+            if (!convIdToUpdate) {
+                for (const conv of Object.values(conversations)) {
+                    if (conv.messages.some(msg => msg.id === messageIdForAttachment)) {
+                        convIdToUpdate = conv.id;
+                        break;
+                    }
+                }
             }
-            // --- END MODIFICATION ---
+            if (convIdToUpdate && messageIdForAttachment) {
+              console.log(`[useRealTimeUpdates] Calling updateFileAttachmentStatus for file ${fileId} in message ${messageIdForAttachment} of conversation ${convIdToUpdate}`);
+              updateFileAttachmentStatus(convIdToUpdate, messageIdForAttachment, fileId, status, errorMsg);
+            } else {
+              console.warn(`[useRealTimeUpdates] Could not determine conversation or messageId for file status update for file ${fileId}. Status not updated in attachment.`);
+            }
           }
-          return; // Don't add a new message for file status updates
+          return; 
         }
         console.warn(`Query ${activeQueryId} no longer processing, skipping progress message.`);
-        return; // Query was cleaned up
+        return; 
     }
     
+    // --- ADDED: Enhanced workflow type and agent name extraction --- 
+    const extractWorkflowTypeAndAgent = (rawData: any, step: any) => {
+      // Extract workflow type with multiple fallbacks
+      const workflowType = rawData?.workflow_type || 
+                          step?.workflow_type || 
+                          rawData?.data?.workflow_type ||
+                          step?.data?.workflow_type ||
+                          null;
+      
+      // Extract agent name with multiple fallbacks
+      const agentName = rawData?.agent_name || 
+                       rawData?.agent || 
+                       step?.agent_name || 
+                       step?.agent ||
+                       rawData?.data?.agent_name ||
+                       rawData?.data?.agent ||
+                       null;
+      
+      console.log(`🔍 Extracted workflow_type: ${workflowType}, agent_name: ${agentName}`);
+      return { workflowType, agentName };
+    };
+    
+    // Extract workflow type and agent name early
+    const { workflowType: extractedWorkflowType, agentName: extractedAgentName } = extractWorkflowTypeAndAgent(rawData, step);
+    
+    // Update workflow type if available and not already set
+    if (extractedWorkflowType && extractedWorkflowType !== 'unknown') {
+      console.log(`🔍 Setting workflow type: ${extractedWorkflowType}`);
+      setWorkflowType(extractedWorkflowType);
+    }
+    
+    // Get friendly agent name for display
+    const friendlyExtractedAgentName = extractedAgentName ? getUserFriendlyAgentName(extractedAgentName) : null;
+    // --- END ADDED ---
+    
+    // --- ADDED: Handle streaming messages for 'result' update_type ---
+    if (updateType === 'result' && rawData.streaming?.is_streaming) {
+        const queryId = step.queryId;
+        const streamingKey = `${queryId}_result`;
+        const isStreamingFinal = rawData.streaming.is_final;
+        
+        // --- ADDED: Comprehensive debugging for streaming content ---
+        console.log(`📡 STREAMING DEBUG - Raw step object:`, {
+            step_message: step.message,
+            step_message_type: typeof step.message,
+            raw_data: rawData,
+            streaming_info: rawData.streaming,
+            full_step: step
+        });
+        
+        // Try multiple sources for the streaming content
+        let messageContent = '';
+        if (step.message !== undefined && step.message !== null) {
+            messageContent = String(step.message);
+            console.log(`📡 Using step.message: "${messageContent}"`);
+        } else if (rawData.message !== undefined && rawData.message !== null) {
+            messageContent = String(rawData.message);
+            console.log(`📡 Using rawData.message: "${messageContent}"`);
+        } else if (rawData.result !== undefined && rawData.result !== null) {
+            messageContent = String(rawData.result);
+            console.log(`📡 Using rawData.result: "${messageContent}"`);
+        } else {
+            messageContent = '';
+            console.warn(`📡 No valid message content found in streaming result!`);
+        }
+        // --- END ADDED ---
+        
+        console.log(`📡 Received streaming result: final=${isStreamingFinal}, message="${messageContent.substring(0, 50)}..."`);
+        
+        if (isStreamingFinal) {
+            // Final streaming message - process as normal result
+            console.log(`📡 Final streaming message received for query ${queryId}`);
+            
+            // Clear streaming state
+            setStreamingMessages(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(streamingKey);
+                return newMap;
+            });
+            
+            setStreamingMessageIds(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(streamingKey);
+                return newMap;
+            });
+            
+            // Process as final result if not already processed
+            if (queryId && !processedQueryIdsRef.current.has(queryId)) {
+                console.log(`[useEffect] Processing final streaming result for query ${queryId}`);
+                processFinalResponse(step.raw_data, conversationId, queryId)
+                   .catch(err => {
+                      console.error(`[useEffect] Error processing final streaming response for query ${queryId}:`, err);
+                   }); 
+            }
+        } else {
+            // Partial streaming message - update or create streaming message
+            const existingMessageId = streamingMessageIds.get(streamingKey);
+            
+            if (existingMessageId) {
+                // Update existing streaming message
+                console.log(`📡 Updating streaming message ${existingMessageId} with partial content`);
+                const updatedMessage = {
+                    id: existingMessageId,
+                    content: messageContent,
+                    role: 'assistant' as const,
+                    timestamp: new Date(),
+                    metadata: {
+                        queryId: activeQueryId,
+                        isStreaming: true,
+                        streamingKey: streamingKey,
+                        workflowType: rawData.workflow_type || step.workflow_type // Add workflow type
+                    }
+                };
+                addMessage(conversationId, updatedMessage);
+            } else {
+                // Create new streaming message
+                const newMessageId = `streaming_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                console.log(`📡 Creating new streaming message ${newMessageId} for key ${streamingKey}`);
+                
+                setStreamingMessageIds(prev => {
+                    const newMap = new Map(prev);
+                    newMap.set(streamingKey, newMessageId);
+                    return newMap;
+                });
+                
+                const streamingMessage = {
+                    id: newMessageId,
+                    content: messageContent,
+                    role: 'assistant' as const,
+                    timestamp: new Date(),
+                    metadata: {
+                        queryId: activeQueryId,
+                        isStreaming: true,
+                        streamingKey: streamingKey,
+                        workflowType: rawData.workflow_type || step.workflow_type // Add workflow type
+                    }
+                };
+                addMessage(conversationId, streamingMessage);
+            }
+            
+            // Update streaming state
+            setStreamingMessages(prev => {
+                const newMap = new Map(prev);
+                newMap.set(streamingKey, messageContent);
+                return newMap;
+            });
+        }
+        
+        return; // Don't process as regular message
+    }
+    // --- END ADDED ---
+
     // --- MODIFIED: Handle 'result' step - check for duplicates and call processFinalResponse directly --- 
-    if (stepType === 'result') {
+    if (stepType === 'result' || updateType === 'result') {
         const queryId = step.queryId;
         if (queryId && processedQueryIdsRef.current.has(queryId)) {
             // If already processed, just log and ignore this duplicate step
@@ -536,7 +798,7 @@ export const useRealTimeUpdates = () => {
             // If it's a new 'result' step, log and call processFinalResponse directly.
             // processFinalResponse now handles adding message, marking processed, and cleanup.
             console.log(`[useEffect] Received step_type 'result' for new query ${queryId}. Calling processFinalResponse.`);
-            processFinalResponse(step.raw_data, conversationId, queryId)
+            processFinalResponse(step.raw_data || step, conversationId, queryId)
                .catch(err => {
                   // Log error from processing, cleanup should have happened inside processFinalResponse
                   console.error(`[useEffect] Error processing final response for query ${queryId}:`, err);
@@ -592,7 +854,7 @@ export const useRealTimeUpdates = () => {
           });
 
           // Save the message to the database
-          saveMessageToDatabase(conversationId, clarificationMessage, 'assistant', { queryId: activeQueryId, isClarificationRequest: true, explanation: explanation });
+          saveMessageToDatabase(conversationId, uuidv4(), clarificationMessage, 'assistant', { queryId: activeQueryId, isClarificationRequest: true, explanation: explanation });
 
           // Update state: Set waiting flag, stop loading indicator
           setPerConversationState(prev => ({
@@ -621,10 +883,12 @@ export const useRealTimeUpdates = () => {
 
     // --- MODIFIED: Convert to lowercase for case-insensitive comparison --- 
     if (stepType?.trim().toLowerCase() === 'routing') { 
-        const agentName = step.raw_data?.agent_name || step.raw_data?.selected_agent || 'Router'; // Also check selected_agent
-        const routingMsg = `Routing to ${agentName}`; // Changed message format
-        console.log(`[useRealTimeUpdates] Routing step_type 'routing' to AgentStatusIndicator: ${routingMsg} (Agent: ${agentName})`);
-        setAgentStatus(routingMsg, 'routing', agentName); // Use lowercase 'routing' for consistency
+        // ENHANCED: Use extracted agent name first, then fallback to step data
+        const agentName = extractedAgentName || step.raw_data?.agent_name || step.raw_data?.agent || step.raw_data?.selected_agent || 'Router';
+        const friendlyAgentName = friendlyExtractedAgentName || getUserFriendlyAgentName(agentName);
+        const routingMsg = `Routing to ${friendlyAgentName}`; // Changed message format
+        console.log(`[useRealTimeUpdates] Routing step_type 'routing' to AgentStatusIndicator: ${routingMsg} (Agent: ${friendlyAgentName}, Workflow: ${extractedWorkflowType})`);
+        setAgentStatus(routingMsg, 'routing', friendlyAgentName); // Use lowercase 'routing' for consistency
         console.log("[useRealTimeUpdates] Explicit RETURN after handling routing."); 
         return;
     }
@@ -642,22 +906,24 @@ export const useRealTimeUpdates = () => {
     // --- ADDED: Explicit handler for 'running' step_type --- 
     if (stepType?.toLowerCase() === 'running') {
         console.log("🟣 TRACE: Entering 'running' handler block."); 
-        const agentName = rawData?.agent || 'Agent'; // Try to get agent name
-        const runningMsg = `${agentName} is running...`; 
-        console.log(`[useRealTimeUpdates] Routing step_type 'running' to AgentStatusIndicator: ${runningMsg}`); 
-        setAgentStatus(runningMsg, 'running', agentName); // Use 'running' status type
+        const agentName = extractedAgentName || rawData?.agent_name || rawData?.agent || 'Agent'; // Enhanced extraction
+        const friendlyAgentName = friendlyExtractedAgentName || getUserFriendlyAgentName(agentName);
+        const runningMsg = `${friendlyAgentName} is running...`; 
+        console.log(`[useRealTimeUpdates] Routing step_type 'running' to AgentStatusIndicator: ${runningMsg} (Workflow: ${extractedWorkflowType})`); 
+        setAgentStatus(runningMsg, 'running', friendlyAgentName); // Use 'running' status type
         return; // Prevent adding to history
     }
     // --- END ADDED ---
     
     if (stepType?.toLowerCase() === 'chatting') {
-        // --- MODIFIED: Log raw_data and extracted name --- 
+        // --- MODIFIED: Enhanced agent name extraction --- 
         console.log("[useRealTimeUpdates] Raw data for Chatting step:", step.raw_data);
-        const agentName = step.raw_data?.agent || 'Agent'; // Use 'agent' instead of 'agent_name'
-        console.log(`[useRealTimeUpdates] Extracted agentName for Chatting: ${agentName}`);
-        const runningMsg = `${agentName} is running...`; 
-        console.log(`[useRealTimeUpdates] Routing step_type 'Chatting' to AgentStatusIndicator: ${runningMsg}`); 
-        setAgentStatus(runningMsg, 'Chatting', agentName); 
+        const agentName = extractedAgentName || step.raw_data?.agent_name || step.raw_data?.agent || 'Agent'; // Prioritize extracted agent_name
+        const friendlyAgentName = friendlyExtractedAgentName || getUserFriendlyAgentName(agentName);
+        console.log(`[useRealTimeUpdates] Extracted agentName for Chatting: ${friendlyAgentName}`);
+        const runningMsg = `${friendlyAgentName} is running...`; 
+        console.log(`[useRealTimeUpdates] Routing step_type 'Chatting' to AgentStatusIndicator: ${runningMsg} (Workflow: ${extractedWorkflowType})`); 
+        setAgentStatus(runningMsg, 'Chatting', friendlyAgentName); 
         console.log("[useRealTimeUpdates] Explicit RETURN after handling Chatting."); // Added log
         return; 
     }
@@ -665,41 +931,47 @@ export const useRealTimeUpdates = () => {
     // Skip other meta step types that shouldn't show status or be added to history
     if (stepType === 'Finished') {
         setAgentStatus(null, null); 
-        setWorkflowType(null); // Clear workflow type here
+        setWorkflowType(null); 
         return; 
     }
     
-    // --- ADDED: Handle file status updates ---
-    if (step.step_type === 'file_processed' || step.step_type === 'file_error') {
-      // --- DEBUGGING ADDED ---
-      console.log("[useRealTimeUpdates] Received file status update:", step);
-      // --- END DEBUGGING ---
-      const fileId = step.raw_data?.file_id;
-      const status = step.step_type === 'file_processed' ? 'completed' as const : 'error' as const;
-      const errorMsg = step.step_type === 'file_error' ? step.message : undefined;
-      const messageId = step.raw_data?.messageId; // Use messageId from payload
-      if (fileId && conversationId) {
-        console.log(`Received file status update: ${fileId} -> ${status} for conversation ${conversationId}`);
-        // Find the message containing this file attachment
-        // --- MODIFIED: Use messageId directly --- 
-        const targetMessageId = messageId;
-        console.log(`Attempting to update file status for: convId=${conversationId}, msgId=${targetMessageId}, fileId=${fileId}`);
-        if (targetMessageId) {
-          // --- DEBUGGING ADDED ---
-          console.log("[useRealTimeUpdates] Calling updateFileAttachmentStatus...", { conversationId, targetMessageId, fileId, status, errorMsg });
-          // --- END DEBUGGING ---
-          updateFileAttachmentStatus(conversationId, targetMessageId, fileId, status, errorMsg);
-          console.log(`[useRealTimeUpdates] Called updateFileAttachmentStatus for file ${fileId} in message ${targetMessageId}`);
-        } else {
-          console.warn(`[useRealTimeUpdates] Missing messageId in file status update payload for file ${fileId}. Cannot update status.`);
-        }
-        // --- END MODIFICATION ---
-      }
-      // It might be useful to show a small system message confirming success/error?
-      // For now, just update the status and don't add a new message.
-      return; // Don't proceed to add a new message for file status updates
+    // --- MODIFIED: Handle file status updates and route to AgentStatusIndicator ---\
+    if (step.step_type === 'file_processing_wait') {
+        console.log("[useRealTimeUpdates] Handling file_processing_wait:", step);
+        // Use step.message if available, otherwise construct a default one using raw_data.files if present.
+        const statusIndicatorMessage = step.message || `Processing: ${step.raw_data?.files?.join(', ') || 'file(s)'}...`;
+        const agentNameForStatus = step.raw_data?.agent_name || step.raw_data?.agent || 'System'; // Enhanced extraction
+        const friendlyAgentNameForStatus = getUserFriendlyAgentName(agentNameForStatus);
+        setAgentStatus(statusIndicatorMessage, 'status', friendlyAgentNameForStatus);
+        return; // Only update status indicator
     }
-    // --- END ADDED --- 
+    
+    if (step.step_type === 'file_processed' || step.step_type === 'file_error') {
+      console.log("[useRealTimeUpdates] Handling file status update:", step);
+      const fileId = step.raw_data?.file_id;
+      const status = step.step_type === 'file_processed' ? 'completed'as const : 'error' as const;
+      const errorMsg = step.step_type === 'file_error' ? step.message : undefined;
+      const messageIdForAttachment = step.raw_data?.messageId; 
+
+      // Update Agent Status Indicator
+      const statusIndicatorMessage = step.message || 
+        (step.step_type === 'file_processed' ? `File '${step.raw_data?.filename || fileId || 'unknown'}' processed.` :
+        `Error processing file '${step.raw_data?.filename || fileId || 'unknown'}'`);
+      const agentNameForStatus = step.raw_data?.agent_name || step.raw_data?.agent || 'System'; // Enhanced extraction
+      const friendlyAgentNameForStatus = getUserFriendlyAgentName(agentNameForStatus);
+      setAgentStatus(statusIndicatorMessage, 'status', friendlyAgentNameForStatus);
+
+      // Update file attachment status in the UI if applicable
+      if (fileId && conversationId && messageIdForAttachment) {
+        console.log(`[useRealTimeUpdates] Calling updateFileAttachmentStatus for file ${fileId} in message ${messageIdForAttachment} of conversation ${conversationId}`);
+        updateFileAttachmentStatus(conversationId, messageIdForAttachment, fileId, status, errorMsg);
+      } else {
+        if (!fileId) console.warn(`[useRealTimeUpdates] Missing fileId in ${step.step_type} payload.`);
+        if (!messageIdForAttachment) console.warn(`[useRealTimeUpdates] Missing messageId in ${step.step_type} payload. Cannot update attachment status.`);
+      }
+      return; 
+    }
+    // --- END MODIFIED --- 
 
     // If we reach here, it's a progress step that SHOULD be added to the chat history
     // (e.g., Tool Calls, Tool Results, LLM Text Output)
@@ -761,9 +1033,161 @@ export const useRealTimeUpdates = () => {
     console.log(`Checking for updateType='plan'. Current stepType is: ${stepType}`);
     // <<< END ADDED >>>
 
+    // --- ADDED: Handle streaming messages for 'plan' update_type ---
+    // DISABLED: Streaming plans to prevent duplicate plan messages
+    /*
+    if (updateType === 'plan' && rawData.streaming?.is_streaming) {
+        const queryId = step.queryId;
+        const streamingKey = `${queryId}_plan`;
+        const isStreamingFinal = rawData.streaming.is_final;
+        
+        // --- FIXED: Generate the actual formatted plan content for streaming ---
+        let messageContent = '';
+        
+        if (isStreamingFinal) {
+            // For final streaming, generate the complete formatted plan
+            const planData = step.raw_data?.plan_details;
+            let planContent = "";
+            
+            if (planData && Array.isArray(planData.steps) && planData.steps.length > 0) {
+                try {
+                    const formattedSteps = planData.steps.map((planStep: any, stepIndex: number) => {
+                        let stepString = `* **Step ${stepIndex + 1}:** ${planStep.description || 'No step description'}`;
+                        
+                        if (planStep.tasks && Array.isArray(planStep.tasks) && planStep.tasks.length > 0) {
+                            const formattedTasks = planStep.tasks.map((task: any) => {
+                                return `  * Task: ${task.description || 'No task description'} (Agent: ${task.agent || 'N/A'})`;
+                            }).join('\n');
+                            stepString += `\n${formattedTasks}`;
+                        }
+                        return stepString;
+                    }).join('\n\n');
+                    
+                    planContent = formattedSteps;
+                } catch (formatError) {
+                    console.error("Plan streaming - Error during plan formatting:", formatError);
+                    planContent = "(Error formatting plan details)";
+                }
+            } else if (typeof planData === 'object' && planData !== null) {
+                planContent = `\`\`\`json\n${JSON.stringify(planData, null, 2)}\n\`\`\``;
+            } else if (typeof planData === 'string') {
+                planContent = `\`\`\`\n${planData}\n\`\`\``;
+            } else {
+                planContent = "(Plan details not available)";
+            }
+            
+            messageContent = `Generated Plan:\n${planContent}`;
+            console.log(`📡 Plan streaming - Generated formatted content for final message: ${messageContent.length} chars`);
+        } else {
+            // For partial streaming, we can't format incomplete plan data
+            // So we'll stream a simple progress message instead
+            const wordIndex = rawData.streaming?.word_index || 0;
+            const totalWords = rawData.streaming?.total_words || 0;
+            
+            if (totalWords > 0) {
+                const progress = Math.round((wordIndex / totalWords) * 100);
+                messageContent = `Generating plan... (${progress}% complete)`;
+            } else {
+                messageContent = 'Generating plan...';
+            }
+            console.log(`📡 Plan streaming - Generated progress message: "${messageContent}"`);
+        }
+        
+        console.log(`📡 Received streaming plan: final=${isStreamingFinal}, message="${messageContent.substring(0, 50)}..."`);
+        
+        if (isStreamingFinal) {
+            // Final streaming plan message - process as normal plan
+            console.log(`📡 Final streaming plan message received for query ${queryId}`);
+            
+            // Clear streaming state
+            setStreamingMessages(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(streamingKey);
+                return newMap;
+            });
+            
+            setStreamingMessageIds(prev => {
+                const newMap = new Map(prev);
+                newMap.delete(streamingKey);
+                return newMap;
+            });
+            
+            // FIXED: Return here to prevent duplicate processing
+            // The streaming final message should replace the regular plan message
+            console.log(`📡 Final streaming plan processed, skipping regular plan handler`);
+            return;
+        } else {
+            // Partial streaming plan message - update or create streaming message
+            const existingMessageId = streamingMessageIds.get(streamingKey);
+            
+            if (existingMessageId) {
+                // Update existing streaming plan message
+                console.log(`📡 Updating streaming plan message ${existingMessageId} with partial content`);
+                const updatedMessage = {
+                    id: existingMessageId,
+                    content: messageContent,
+                    role: 'system' as const,
+                    timestamp: new Date(),
+                    metadata: {
+                        queryId: activeQueryId,
+                        isStreaming: true,
+                        streamingKey: streamingKey,
+                        stepType: 'Plan Generated',
+                        workflowType: rawData.workflow_type || step.workflow_type
+                    }
+                };
+                addMessage(conversationId, updatedMessage);
+            } else {
+                // Create new streaming plan message
+                const newMessageId = `streaming_plan_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                console.log(`📡 Creating new streaming plan message ${newMessageId} for key ${streamingKey}`);
+                
+                setStreamingMessageIds(prev => {
+                    const newMap = new Map(prev);
+                    newMap.set(streamingKey, newMessageId);
+                    return newMap;
+                });
+                
+                const streamingMessage = {
+                    id: newMessageId,
+                    content: messageContent,
+                    role: 'system' as const,
+                    timestamp: new Date(),
+                    metadata: {
+                        queryId: activeQueryId,
+                        isStreaming: true,
+                        streamingKey: streamingKey,
+                        stepType: 'Plan Generated',
+                        workflowType: rawData.workflow_type || step.workflow_type
+                    }
+                };
+                addMessage(conversationId, streamingMessage);
+            }
+            
+            // Update streaming state
+            setStreamingMessages(prev => {
+                const newMap = new Map(prev);
+                newMap.set(streamingKey, messageContent);
+                return newMap;
+            });
+            
+            return; // Don't process as regular plan message yet
+        }
+    }
+    */
+    // --- END DISABLED STREAMING PLANS ---
+
     // --- ADDED: Handle Plan --- 
-    if (stepType === 'Plan') {
+    if (stepType === 'Plan' || updateType === 'plan') {
         console.log("🟣 TRACE: Entering 'plan' handler block.");
+        
+        // Prevent duplicate plan processing by checking if we already processed this plan
+        const planProcessingKey = `plan_${activeQueryId}_${step.raw_data?.plan_details?.timestamp || Date.now()}`;
+        const existingPlanId = streamingMessageIds.get(planProcessingKey);
+        if (existingPlanId) {
+            console.log("🟣 TRACE: Plan already processed, skipping duplicate");
+            return;
+        }
         const planData = step.raw_data?.plan_details;
         // <<< ADDED: Log extracted planData >>>
         console.log("Plan Handler - Extracted planData:", planData);
@@ -771,66 +1195,111 @@ export const useRealTimeUpdates = () => {
         // <<< END ADDED >>>
         let planContent = ""; // Initialize plan content string
 
-        // Check if planData exists and has steps
-        // <<< ADDED: Log check result >>>
-        const planCheck = planData && Array.isArray(planData.steps) && planData.steps.length > 0;
-        console.log("Plan Handler - Steps check (planData && Array.isArray(planData.steps) && planData.steps.length > 0):", planCheck);
-        // <<< END ADDED >>>
-        if (planCheck) {
-            try { // <<< ADDED: Try/catch around formatting >>>
-                // Start formatting the plan using Markdown lists
-                const formattedSteps = planData.steps.map((planStep: any, stepIndex: number) => {
-                    // Format Step Description
-                    let stepString = `* **Step ${stepIndex + 1}:** ${planStep.description || 'No step description'}`;
-                    
-                    // Format Tasks within the step
-                    if (planStep.tasks && Array.isArray(planStep.tasks) && planStep.tasks.length > 0) {
-                        const formattedTasks = planStep.tasks.map((task: any) => {
-                            // Indent tasks under the step
-                            return `  * Task: ${task.description || 'No task description'} (Agent: ${task.agent || 'N/A'})`;
-                        }).join('\n'); // Join tasks with newlines
-                        stepString += `\n${formattedTasks}`; // Add tasks below step description
-                    }
-                    return stepString;
-                }).join('\n\n'); // Join steps with double newlines for separation
+        // IMPROVED: Check for completion status and handle appropriately
+        if (planData && typeof planData === 'object') {
+            // Check if plan is marked as complete
+            if (planData.is_complete === true) {
+                console.log("Plan Handler - Plan marked as complete, showing completion message");
+                planContent = "✅ **All planned steps have been successfully executed!**\n\nThe task has been completed according to the generated plan.";
+            }
+            // Check if planData has valid steps to display
+            else if (Array.isArray(planData.steps) && planData.steps.length > 0) {
+                console.log("Plan Handler - Formatting plan steps:", planData.steps.length);
+                try {
+                    // Start formatting the plan using Markdown lists
+                    const formattedSteps = planData.steps.map((planStep: any, stepIndex: number) => {
+                        // Format Step Description
+                        let stepString = `* **Step ${stepIndex + 1}:** ${planStep.description || 'No step description'}`;
+                        
+                        // Format Tasks within the step
+                        if (planStep.tasks && Array.isArray(planStep.tasks) && planStep.tasks.length > 0) {
+                            const formattedTasks = planStep.tasks.map((task: any) => {
+                                // Indent tasks under the step
+                                return `  * Task: ${task.description || 'No task description'} (Agent: ${task.agent || 'N/A'})`;
+                            }).join('\n'); // Join tasks with newlines
+                            stepString += `\n${formattedTasks}`; // Add tasks below step description
+                        }
+                        return stepString;
+                    }).join('\n\n'); // Join steps with double newlines for separation
 
-                planContent = formattedSteps;
-                // <<< ADDED: Log formatted content >>>
-                console.log("Plan Handler - Successfully formatted steps:", planContent);
-                // <<< END ADDED >>>
-            } catch (formatError) {
-                console.error("Plan Handler - Error during plan formatting:", formatError);
-                planContent = "(Error formatting plan details)";
-            } // <<< END ADDED >>>
+                    planContent = formattedSteps;
+                    console.log("Plan Handler - Successfully formatted steps");
+                } catch (formatError) {
+                    console.error("Plan Handler - Error during plan formatting:", formatError);
+                    planContent = "(Error formatting plan details)";
+                }
+            }
+            // Handle empty steps array but valid plan data
+            else if (Array.isArray(planData.steps) && planData.steps.length === 0) {
+                console.log("Plan Handler - Empty steps array, checking for other plan content");
+                // Check if there's any other meaningful content
+                const planKeys = Object.keys(planData).filter(key => key !== 'steps' && key !== 'is_complete');
+                if (planKeys.length > 0) {
+                    planContent = `📋 **Plan Structure Received**\n\n\`\`\`json\n${JSON.stringify(planData, null, 2)}\n\`\`\``;
+                } else {
+                    planContent = "📋 **Plan initialized** - No specific steps defined yet.";
+                }
+            }
+            // Fallback for other plan object structures
+            else {
+                console.warn("[Plan Handler] Plan data received but no valid steps. Showing plan structure.");
+                planContent = `📋 **Plan Data Received**\n\n\`\`\`json\n${JSON.stringify(planData, null, 2)}\n\`\`\``;
+            }
         } 
-        // Fallback if planData is not structured as expected
-        else if (typeof planData === 'object' && planData !== null) {
-            console.warn("[Plan Handler] Plan data received but steps array missing or empty. Displaying JSON.")
-            planContent = `\`\`\`json\n${JSON.stringify(planData, null, 2)}\n\`\`\``;
-        } else if (typeof planData === 'string') {
+        // Handle string plan data
+        else if (typeof planData === 'string') {
             console.warn("[Plan Handler] Plan data received as raw string.")
-            planContent = `\`\`\`\n${planData}\n\`\`\``;
-        } else {
+            planContent = `📋 **Plan Information**\n\n\`\`\`\n${planData}\n\`\`\``;
+        } 
+        // No valid plan data
+        else {
             console.warn("[Plan Handler] No valid plan details found in payload.")
-            planContent = "(Plan details not available)"
+            planContent = "📋 **Plan requested** - Details will be provided shortly.";
         }
         
         // Final message to display
-        const displayMessage = `Generated Plan:\n${planContent}`;
+        const displayMessage = planData?.is_complete === true ? planContent : `Generated Plan:\n${planContent}`;
         
         console.log(`🟣 TRACE: Adding plan message via addMessage.`);
         const messageId = `plan_${Date.now()}`;
+        // Mark this plan as processed to prevent duplicates
+        setStreamingMessageIds(prev => {
+            const newMap = new Map(prev);
+            newMap.set(planProcessingKey, messageId);
+            return newMap;
+        });
+        
+        // Get agent name for plan messages too
+        const planRawAgentName = step.raw_data?.agent_name || step.raw_data?.agent || 'LLM Orchestration Planner';
+        const planFriendlyAgentName = getUserFriendlyAgentName(planRawAgentName);
+        
         addMessage(conversationId, {
             id: messageId,
             content: displayMessage, // Use the new formatted message
             role: 'system', // Display plan as system message
             timestamp: new Date(),
-            metadata: { queryId: activeQueryId, isAgentProgress: true, stepType: 'Plan Generated' } // Keep metadata
+            metadata: { 
+                queryId: activeQueryId, 
+                isAgentProgress: true, 
+                stepType: planData?.is_complete === true ? 'Plan Completed' : 'Plan Generated',
+                agentName: planFriendlyAgentName,
+                rawAgentName: planRawAgentName,
+                planComplete: planData?.is_complete === true
+            }
         });
-        saveMessageToDatabase(conversationId, displayMessage, 'system', { isAgentProgress: true, stepType: 'Plan Generated', queryId: activeQueryId });
+        saveMessageToDatabase(conversationId, uuidv4(), displayMessage, 'system', { 
+            isAgentProgress: true, 
+            stepType: planData?.is_complete === true ? 'Plan Completed' : 'Plan Generated', 
+            agentName: planFriendlyAgentName,
+            rawAgentName: planRawAgentName,
+            queryId: activeQueryId,
+            planComplete: planData?.is_complete === true
+        });
 
-        // Optionally update agent status
-        setAgentStatus("Plan generated", 'plan', 'Planner');
+        // Optionally update agent status with extracted agent name and workflow type
+        const planAgentName = friendlyExtractedAgentName || planFriendlyAgentName || 'Planner';
+        console.log(`[useRealTimeUpdates] Plan generated by ${planAgentName} (Workflow: ${extractedWorkflowType})`);
+        setAgentStatus("Plan generated", 'plan', planAgentName);
 
         return; // Handled this update type
     }
@@ -841,32 +1310,415 @@ export const useRealTimeUpdates = () => {
         // --- ADDED: Debugging log --- 
         console.log("🟣 TRACE: Entering FINAL else block for adding message.");
         // --- Content construction logic (remains largely the same) --- 
-      const agentPrefix = rawData.agent_name ? `[${rawData.agent_name}] ` : '';
-      if (step.message && step.message.trim() !== '' && !step.message.startsWith('send_request: response=')) {
-        content = `${agentPrefix}${step.message}`.trim();
-      } 
-      // ... (fallback logic: llm_text_output, Calling Tool, Tool Result, default)
-      else if (rawData.llm_text_output) {
-        content = `${agentPrefix}${rawData.llm_text_output}`.trim();
-      } else if (currentStepType === 'Calling Tool') {
-          //... existing tool call formatting
-        const toolName = rawData.tool_name || 'Unknown Tool';
-        let argsString = '';
-        if (rawData.tool_arguments) {
+      // DEBUG: Always log step type for troubleshooting
+      console.log(`🚨 Step Processing Debug - currentStepType="${currentStepType}", step.type="${step.type}", step.message="${step.message?.substring(0, 50)}..."`);
+      
+      // Get agent names early for use throughout processing
+      const rawAgentName = rawData.agent_name || rawData.agent || step.raw_data?.agent_name || step.raw_data?.agent;
+      const friendlyAgentName = rawAgentName ? getUserFriendlyAgentName(rawAgentName) : null;
+      
+      // PRIORITY CHECK: Handle tool calling first, regardless of step.message content
+      if (currentStepType === 'Calling Tool') {
+        // Handle tool calling - SEPARATE the LLM text from the tool call
+        console.log(`🔧 Tool Call Debug - currentStepType="${currentStepType}"`);
+        console.log(`🔧 Tool Call Debug - Full rawData:`, rawData);
+        console.log(`🔧 Tool Call Debug - Full step:`, step);
+        
+        // Agent names already declared at top level
+        
+        // Try multiple sources for tool name - CHECK tool_args from MCP params
+        let toolName = rawData.tool_name || step.tool_name || step.raw_data?.tool_name;
+        
+        // NEW: Check tool_args which might contain the actual tool name
+        if (!toolName && rawData.tool_args) {
           try {
-            const args = typeof rawData.tool_arguments === 'string' ? JSON.parse(rawData.tool_arguments) : rawData.tool_arguments;
-            argsString = Object.entries(args).map(([key, value]) => `${key}=${JSON.stringify(value)}`).join(', ');
-              argsString = argsString.substring(0, 150) + (argsString.length > 150 ? '...' : '');
+            const parsedArgs = typeof rawData.tool_args === 'string' ? JSON.parse(rawData.tool_args) : rawData.tool_args;
+            if (parsedArgs && parsedArgs.name) {
+              toolName = parsedArgs.name;
+              console.log(`🔧 Tool Call Debug: extracted toolName from tool_args: "${toolName}"`);
+            }
           } catch (e) {
-            argsString = String(rawData.tool_arguments).substring(0, 150) + (String(rawData.tool_arguments).length > 150 ? '...' : '');
+            console.log(`🔧 Tool Call Debug: failed to parse tool_args:`, e);
           }
         }
-        content = `${agentPrefix}Calling Tool: ${toolName}(${argsString})`.trim();
-      } else if (currentStepType === 'Tool Result' && rawData.tool_result_summary) { 
-         content = `${agentPrefix}Tool Result: ${rawData.tool_result_summary}`.trim();
+        
+        // If still no tool name, try to extract from step.message
+        if (!toolName && step.message) {
+          const match = step.message.match(/\[Calling tool (\S+)/);
+          if (match) {
+            toolName = match[1];
+          }
+        }
+        
+        toolName = toolName || 'Unknown Tool';
+        console.log(`🔧 Tool Call Debug: final toolName="${toolName}"`);
+        
+        // STEP 1: Extract and separate LLM text from tool call
+        const fullMessage = step.message || '';
+        
+        // SIMPLIFIED: Check if the entire message is just a tool call
+        const isOnlyToolCall = /^\s*\[Calling tool [^\]]+\]\s*$/.test(fullMessage);
+        
+        console.log(`🔧 Tool Call Debug: isOnlyToolCall=${isOnlyToolCall}, fullMessage="${fullMessage}"`);
+        
+        let llmTextPart = '';
+        let hasLLMText = false;
+        let toolCallText = '';
+        
+        if (isOnlyToolCall) {
+          // The entire message is just a tool call - no LLM text
+          toolCallText = fullMessage.trim();
+          llmTextPart = '';
+          hasLLMText = false;
+          console.log(`🔧 Tool Call Debug: Detected pure tool call: "${toolCallText}"`);
+        } else {
+          // IMPROVED: Use manual brace counting for robust tool call extraction
+          // This handles deeply nested JSON like chart configurations
+          
+          let toolCallMatch = null;
+          
+          // First, look for the start of a tool call
+          const toolCallStartMatch = fullMessage.match(/\[Calling tool [^\s\]]+/);
+          if (toolCallStartMatch) {
+            const toolCallStart = toolCallStartMatch.index!;
+            let braceCount = 0;
+            let inArgs = false;
+            let toolCallEnd = -1;
+            
+            // Scan from the tool call start to find the complete tool call
+            for (let i = toolCallStart; i < fullMessage.length; i++) {
+              const char = fullMessage[i];
+              
+              if (char === '{' && !inArgs) {
+                // Found start of args - start counting braces
+                inArgs = true;
+                braceCount = 1;
+              } else if (char === '{' && inArgs) {
+                braceCount++;
+              } else if (char === '}' && inArgs) {
+                braceCount--;
+                if (braceCount === 0) {
+                  // Found end of args - look for closing ]
+                  for (let j = i + 1; j < fullMessage.length; j++) {
+                    if (fullMessage[j] === ']') {
+                      toolCallEnd = j;
+                      break;
+                    } else if (!/\s/.test(fullMessage[j])) {
+                      // Non-whitespace character before ], this isn't the end
+                      break;
+                    }
+                  }
+                  break;
+                }
+              } else if (char === ']' && !inArgs) {
+                // Simple tool call without args
+                toolCallEnd = i;
+                break;
+              }
+            }
+            
+            if (toolCallEnd > toolCallStart) {
+              toolCallText = fullMessage.substring(toolCallStart, toolCallEnd + 1);
+              toolCallMatch = [toolCallText]; // Create match array for compatibility
+              console.log(`🔧 Tool Call Debug: Extracted tool call with brace counting: "${toolCallText.substring(0, 100)}..."`);
+            }
+          }
+          
+          // Fallback: Try simple regex patterns if brace counting failed
+          if (!toolCallMatch) {
+            const fallbackPatterns = [
+              /\[Calling tool [^\]]+\]$/,
+              /\[Calling tool [^\]]+\]$/m,
+              /\[Calling tool.*?\]$/s
+            ];
+            
+            for (const pattern of fallbackPatterns) {
+              toolCallMatch = fullMessage.match(pattern);
+              if (toolCallMatch) {
+                toolCallText = toolCallMatch[0];
+                console.log(`🔧 Tool Call Debug: Matched fallback pattern: "${toolCallText.substring(0, 100)}..."`);
+                break;
+              }
+            }
+          }
+          
+          if (toolCallMatch) {
+            // There's a tool call at the end - extract the text before it
+            const toolCallStart = fullMessage.lastIndexOf(toolCallText);
+            llmTextPart = fullMessage.substring(0, toolCallStart).trim();
+            hasLLMText = llmTextPart.length > 0;
+          } else {
+            // No tool call pattern found, treat entire message as LLM text
+            llmTextPart = fullMessage.trim();
+            hasLLMText = llmTextPart.length > 0;
+            toolCallText = '';
+          }
+        }
+        
+        console.log(`🔧 Tool Call Separation - hasLLMText: ${hasLLMText}, llmTextPart: "${llmTextPart.substring(0, 50)}...", toolCallText: "${toolCallText.substring(0, 50)}..."`);
+        
+        // STEP 2: Add LLM text as separate system message (if it exists)
+        if (hasLLMText) {
+          const llmMessage = {
+            id: `${messageId}_llm_text`, 
+            content: llmTextPart, 
+            role: 'system' as const, // Changed to system to maintain agent styling
+            timestamp: new Date(),
+            metadata: { 
+              isAgentProgress: true, // Changed to true for system styling
+              stepType: 'Agent Response', // Add step type for proper styling
+              agent: rawData.agent,
+              agentName: friendlyAgentName,
+              rawAgentName: rawAgentName,
+              queryId: activeQueryId 
+            }
+          };
+          
+          addMessage(conversationId, llmMessage);
+          
+          try {
+            saveMessageToDatabase(conversationId, llmMessage.id, llmTextPart, 'system', {
+              isAgentProgress: true,
+              stepType: 'Agent Response',
+              agentName: friendlyAgentName,
+              rawAgentName: rawAgentName,
+              queryId: activeQueryId
+            });
+          } catch (error) {
+            console.error('Error saving LLM text message:', error);
+          }
+        }
+        
+        // STEP 3: Create user-friendly tool call message
+        let userFriendlyMessage = '';
+        
+        // Create simple, clean user-friendly messages based on tool name
+        // All details are now in the toggle, so we just need clean action names
+        const toolNameMappings: { [key: string]: string } = {
+          // Web search tools
+          'websearch_websearch-search': 'Searching web',
+          'websearch-search': 'Searching web',
+          
+          // Fetch tools
+          'fetch_fetch': 'Reading website',
+          'fetch': 'Reading website',
+          
+          // Markdown editor tools
+          'markdown-editor_create_document': 'Creating document',
+          'create_document': 'Creating document',
+          'markdown-editor_edit_document': 'Editing document',
+          'edit_document': 'Editing document',
+          'markdown-editor_append_content': 'Adding content to document',
+          'append_content': 'Adding content to document',
+          'markdown-editor_add_image': 'Adding image to document',
+          'add_image': 'Adding image to document',
+          'markdown-editor_convert_to_md': 'Converting to markdown',
+          'convert_to_md': 'Converting to markdown',
+          'markdown-editor_convert_from_md': 'Converting from markdown',
+          'convert_from_md': 'Converting from markdown',
+          'markdown-editor_preview': 'Generating preview',
+          'preview': 'Generating preview',
+          'markdown-editor_live_preview': 'Starting live preview',
+          'live_preview': 'Starting live preview',
+          'markdown-editor_add_chart': 'Adding chart to document',
+          'add_chart': 'Adding chart to document',
+          'markdown-editor_extract_table': 'Extracting table data',
+          'extract_table': 'Extracting table data',
+          'markdown-editor_create_chart': 'Creating chart',
+          'create_chart': 'Creating chart',
+          'markdown-editor_create_chart_from_data': 'Creating chart',
+          'create_chart_from_data': 'Creating chart',
+          'markdown-editor_get_chart_template': 'Getting chart template',
+          'get_chart_template': 'Getting chart template',
+          'markdown-editor_create_document_with_chart': 'Creating document with chart',
+          'create_document_with_chart': 'Creating document with chart',
+          'markdown-editor_get_filesystem_path': 'Getting filesystem path',
+          'get_filesystem_path': 'Getting filesystem path',
+          
+          // Memory/storage tools
+          'qdrant-store': 'Storing in memory',
+          'qdrant_store': 'Storing in memory',
+          'store': 'Storing in memory',
+          'qdrant-find': 'Searching memory',
+          'qdrant_find': 'Searching memory',
+          'find': 'Searching memory',
+          
+          // File system tools
+          'read_file': 'Reading file',
+          'filesystem_read_file': 'Reading file',
+          'read_multiple_files': 'Reading files',
+          'filesystem_read_multiple_files': 'Reading files',
+          'write_file': 'Writing file',
+          'filesystem_write_file': 'Writing file',
+          'edit_file': 'Editing file',
+          'filesystem_edit_file': 'Editing file',  
+          'create_directory': 'Creating directory',
+          'filesystem_create_directory': 'Creating directory',
+          'list_directory': 'Listing directory',
+          'filesystem_list_directory': 'Listing directory',
+          'directory_tree': 'Getting directory tree',
+          'filesystem_directory_tree': 'Getting directory tree',
+          'move_file': 'Moving file',
+          'filesystem_move_file': 'Moving file',
+          'search_files': 'Searching files',
+          'filesystem_search_files': 'Searching files',
+          'get_file_info': 'Getting file info',
+          'filesystem_get_file_info': 'Getting file info',
+          'list_allowed_directories': 'Listing allowed directories',
+          'filesystem_list_allowed_directories': 'Listing allowed directories',
+        };
+        
+        // Use mapping or create a clean default
+        if (toolNameMappings[toolName]) {
+          userFriendlyMessage = toolNameMappings[toolName];
+        } else {
+          // Clean up tool name for display - remove prefixes and make readable
+          // FIXED: Add safety check for toolName
+          if (toolName && typeof toolName === 'string') {
+            let cleanToolName = toolName
+              .replace(/^(markdown-editor_|filesystem_|qdrant[-_]|websearch[-_])/, '') // Remove common prefixes
+              .replace(/[-_]/g, ' ') // Replace dashes/underscores with spaces
+              .toLowerCase()
+              .replace(/\b\w/g, (l: string) => l.toUpperCase()); // Capitalize words
+            
+            userFriendlyMessage = `${cleanToolName}`;
+          } else {
+            userFriendlyMessage = `Tool`;
+          }
+        }
+        
+        // STEP 4: Add the tool call message with special styling metadata and tool arguments
+        const toolArguments = rawData.tool_arguments || rawData.tool_args;
+        
+        // FIXED: Use a more consistent ID generation for tool calls
+        // Use timestamp and tool name to create a unique but predictable ID
+        const timestamp = Date.now();
+        const safeToolName = (toolName && typeof toolName === 'string') ? toolName.replace(/[^a-zA-Z0-9]/g, '_') : 'unknown_tool';
+        const toolCallId = `tool_call_${timestamp}_${safeToolName}`;
+        
+        const toolCallMessage = {
+          id: toolCallId, 
+          content: userFriendlyMessage.trim(), 
+          role: 'system' as const, 
+          timestamp: new Date(),
+          metadata: { 
+            isAgentProgress: true, 
+            stepType: 'Calling Tool', // Explicit step type for styling
+            isToolCall: true, // Special flag for tool calling
+            agent: rawData.agent,
+            agentName: friendlyAgentName,
+            rawAgentName: rawAgentName,
+            serverName: step.server_name, 
+            toolName: toolName, // Use our extracted tool name
+            toolArguments: toolArguments, // Store tool arguments for toggle display (check both field names)
+            queryId: activeQueryId,
+            toolCallTimestamp: timestamp // Store timestamp for result association
+          }
+        };
+        
+        // Add the special tool call message
+        addMessage(conversationId, toolCallMessage);
+        
+        // Save to database with special tool call metadata
+        try {
+          saveMessageToDatabase(conversationId, toolCallMessage.id, userFriendlyMessage.trim(), 'system', {
+            isAgentProgress: true,
+            stepType: 'Calling Tool',
+            isToolCall: true,
+            agentName: friendlyAgentName,
+            rawAgentName: rawAgentName,
+            toolName: toolName,
+            toolArguments: rawData.tool_arguments || rawData.tool_args, // Check both field names
+            queryId: activeQueryId
+          });
+        } catch (error) {
+          console.error('Error saving tool call message:', error);
+        }
+        
+        // Return early to prevent normal message processing
+        return;
+      } 
+      
+      // PRIORITY CHECK: Handle Tool Result - associate with corresponding tool call
+      if (currentStepType === 'Tool Result') {
+        console.log(`🔧 Tool Result Debug - Received tool result for tool: ${step.tool_name || rawData.tool_name}`);
+        
+        // FIXED: Find the most recent tool call with the same tool name and query ID
+        // This approach is more reliable than trying to generate matching IDs
+        const toolName = step.tool_name || rawData.tool_name;
+        
+        // We'll store the tool result with a reference to find the matching tool call
+        // The UI will handle the association by looking for the most recent tool call with matching tool name
+        const toolResult = rawData.tool_result_summary || rawData.tool_result || rawData.tool_call_result || step.message || 'Tool completed';
+        console.log(`🔧 Tool Result Debug - Extracted result:`, toolResult);
+        console.log(`🔧 Tool Result Debug - Tool name for association: ${toolName}`);
+        console.log(`🔧 Tool Result Debug - Query ID: ${activeQueryId}`);
+        console.log(`🔧 Tool Result Debug - Full raw data:`, rawData);
+        
+        // Instead of creating a new message, we'll store the result data for the UI to associate
+        // The UI will handle displaying this as part of the tool call toggle
+        console.log(`🔧 Tool Result - Storing result for tool: ${toolName}`);
+        
+        // Create a tool result message that the UI can use to associate with the tool call
+        const safeToolNameForResult = (toolName && typeof toolName === 'string') ? toolName.replace(/[^a-zA-Z0-9]/g, '_') : 'unknown_tool';
+        const resultTimestamp = Date.now();
+        const toolResultMessage = {
+          id: `tool_result_${resultTimestamp}_${safeToolNameForResult}`,
+          content: '', // Empty content - this will be handled by the toggle UI
+          role: 'system' as const,
+          timestamp: new Date(),
+          metadata: {
+            isAgentProgress: true,
+            stepType: 'Tool Result',
+            isToolResult: true,
+            toolName: toolName,
+            toolResult: toolResult,
+            queryId: activeQueryId,
+            agentName: friendlyAgentName,
+            rawAgentName: rawAgentName,
+            // Store additional info for association
+            resultTimestamp: resultTimestamp
+          }
+        };
+        
+        console.log(`🔧 Tool Result Debug - Created message with metadata:`, {
+          id: toolResultMessage.id,
+          toolName: toolResultMessage.metadata.toolName,
+          queryId: toolResultMessage.metadata.queryId,
+          resultTimestamp: toolResultMessage.metadata.resultTimestamp,
+          hasToolResult: !!toolResultMessage.metadata.toolResult
+        });
+        
+        addMessage(conversationId, toolResultMessage);
+        
+        try {
+          saveMessageToDatabase(conversationId, toolResultMessage.id, '', 'system', {
+            isAgentProgress: true,
+            stepType: 'Tool Result',
+            isToolResult: true,
+            toolName: toolName,
+            toolResult: toolResult,
+            queryId: activeQueryId,
+            agentName: friendlyAgentName,
+            rawAgentName: rawAgentName
+          });
+        } catch (error) {
+          console.error('Error saving tool result message:', error);
+        }
+        
+        return; // Don't process as regular message
+      }
+      
+      // Handle other step types (not Calling Tool or Tool Result)
+      if (step.message && step.message.trim() !== '' && !step.message.startsWith('send_request: response=')) {
+        content = step.message.trim();
+      } 
+      // ... (fallback logic: llm_text_output, default)
+      else if (rawData.llm_text_output) {
+        content = rawData.llm_text_output.trim();
       } else {
           const serverInfo = rawData.server_name ? ` (Server: ${rawData.server_name})` : '';
-          content = `${agentPrefix}${currentStepType}${serverInfo}`.trim(); 
+          content = `${currentStepType}${serverInfo}`.trim(); 
       }
       // --- END Content construction --- 
         
@@ -876,21 +1728,34 @@ export const useRealTimeUpdates = () => {
       console.log("latestStepData:", JSON.stringify(latestStepData, null, 2));
       console.log(`Constructed Content: ${content}`);
 
+      // Agent names already declared at top level - no need to redeclare
+
       const progressMessage = {
         id: messageId, content, role: 'system' as const, timestamp: new Date(),
         metadata: { 
           isAgentProgress: true, 
           stepType: currentStepType, 
-          agent: step.agent, // Use correct key from WebSocket payload
+          agent: rawData.agent, // Keep original for backward compatibility
+          agentName: friendlyExtractedAgentName || friendlyAgentName, // Use extracted name first
+          rawAgentName: extractedAgentName || rawAgentName, // Use extracted name first
           serverName: step.server_name, 
           toolName: step.tool_name, 
-          queryId: activeQueryId 
+          queryId: activeQueryId,
+          workflowType: extractedWorkflowType // Add workflow type to metadata
         }
       };
       addMessage(conversationId, progressMessage);
       try { 
           // The 'return' statements earlier prevent this line from being reached for 'status' and 'Chatting' types.
-          saveMessageToDatabase(conversationId, content, 'system', { isAgentProgress: true, stepType: currentStepType || 'Unknown', queryId: activeQueryId }); 
+          // Generate a unique ID for this system message
+          const systemMessageId = uuidv4(); 
+          saveMessageToDatabase(conversationId, systemMessageId, content, 'system', { 
+            isAgentProgress: true, 
+            stepType: currentStepType || 'Unknown', 
+            agentName: friendlyAgentName,
+            rawAgentName: rawAgentName,
+            queryId: activeQueryId 
+          }); 
       } catch (error) { console.error(error); }
     }
     
@@ -939,7 +1804,7 @@ export const useRealTimeUpdates = () => {
 
       console.log(`Submitting human input ${inputIdForInput} for query ${queryIdForInput}, tool ${request.toolName}`);
       // Now directly call the function which should exist on the api object
-      const response = await api.submitHumanInput(inputIdForInput, queryIdForInput, request.toolName, input);
+      const response = await (api as any).submitHumanInput(inputIdForInput, queryIdForInput, request.toolName, input);
       
       // Clear the request for the specific conversation *after* successful API call
       setPerConversationState(prev => ({

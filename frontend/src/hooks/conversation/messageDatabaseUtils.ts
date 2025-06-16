@@ -1,6 +1,11 @@
 import { useCallback } from 'react';
+import { v4 as uuidv4 } from 'uuid';
 import useConversationStore from '../../store/conversationStore';
 import { useEnhancedApi } from '../api';
+import { Conversation } from './types';
+
+// Helper to generate a new conversation ID
+export const generateNewConversationId = () => uuidv4();
 
 /**
  * Utility hook with functions for saving messages to the database
@@ -19,22 +24,29 @@ export const useMessageDatabaseUtils = () => {
    */
   const saveMessageToDatabase = useCallback(async (
     conversationId: string,
+    messageId: string,
     content: string,
     role: 'user' | 'assistant' | 'system',
     metadata: any = {}
   ) => {
-    console.log('🔴 SAVE MESSAGE TO DB CALLED:', {
+    // Log ALL calls to this function with their arguments
+    console.log(
+      '🔴🔴🔴 [messageDatabaseUtils] saveMessageToDatabase CALLED WITH:',
+      {
       conversationId,
+        messageId,
+        content,
       role,
-      contentPreview: typeof content === 'string' ? 
-        (content.substring(0, 50) + '...') : 
-        String(content || '').substring(0, 50) + '...',
-    });
+        metadata,
+        contentPreview: typeof content === 'string' ? content.substring(0, 50) + '...' : '[non-string content]',
+      }
+    );
     
     try {
       // Try to save the message
-      console.log('🔴 Attempting to save message via API...');
+      console.log('🔴 Attempting to save message via API...', { conversationId, messageId, role });
       await api.addMessageWithRetry(conversationId, {
+        id: messageId,
         content,
         role,
         metadata
@@ -67,6 +79,7 @@ export const useMessageDatabaseUtils = () => {
           // Now try to save the message to the new conversation ID
           console.log('🔴 Saving message to new conversation ID...');
           await api.addMessageWithRetry(serverConversationId, {
+            id: messageId,
             content,
             role,
             metadata

@@ -145,10 +145,16 @@ export const useEnhancedApi = () => {
       checkCoordinatorStatusWithRetry: (queryId: string, shouldRetry = true) => 
         callWithRetry(api.checkCoordinatorStatus, [queryId], shouldRetry),
       // File endpoints
-      uploadFileWithRetry: (endpoint: string, file: File, additionalData = {}, shouldRetry = false) => 
-        callWithRetry(api.uploadFile, [endpoint, file, additionalData], shouldRetry),
+      uploadFileWithRetry: (file: File, additionalData: { user_id?: string | null, query_id?: string, message_id?: string, token?: string | null } = {}, shouldRetry = false) => 
+        callWithRetry(api.uploadFile, [file, additionalData], shouldRetry),
       getFilesWithRetry: (params?: any, shouldRetry = true) =>
         callWithRetry(api.getFiles, [params], shouldRetry),
+      getFileWithRetry: (fileId: string, shouldRetry = true) =>
+        callWithRetry(api.get, [`/files/${fileId}`], shouldRetry),
+      downloadFileWithRetry: (fileId: string, shouldRetry = true) => // Assuming GET /files/:id/download
+        callWithRetry(api.get, [`/files/${fileId}/download`], shouldRetry),
+      deleteFileWithRetry: (fileId: string, shouldRetry = true) =>
+        callWithRetry(api.delete, [`/files/${fileId}`], shouldRetry),
       // Add more as needed
     };
   }, [api, callWithRetry, resetCircuitBreaker]);

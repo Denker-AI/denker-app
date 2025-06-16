@@ -67,8 +67,8 @@ mcp-agent/            # If this is just cloned repo, ignore it
 mcp-filesystem/       # If this is just cloned repo, ignore it
 mcp-fetch/            # If this is just cloned repo, ignore it
 mcp-server-qdrant/    # If this is just cloned repo, ignore it
-backend/qdrant_data/  # Ignore local Qdrant data
-backend/memory_data/  # Ignore local memory data
+local-backend/qdrant_data/  # Ignore local Qdrant data
+local-backend/memory_data/  # Ignore local memory data
 
 # macOS specific folders from Finder/Path Bar
 .file 

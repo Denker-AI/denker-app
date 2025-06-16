@@ -148,3 +148,40 @@ class SearchResult(Base):
     relevance_score = Column(Float)
     position = Column(Integer)
     created_at = Column(DateTime(timezone=True), server_default=func.now()) 
+
+# --- Memory/Knowledge Graph Models ---
+
+class MemoryEntity(Base):
+    __tablename__ = "memory_entities"
+    entity_name = Column(String(255), primary_key=True)
+    entity_type = Column(String(255), nullable=False)
+    conversation_ref = Column(String(36), nullable=True)
+    message_ref = Column(String(36), nullable=True)
+    ttl = Column(DateTime(timezone=True), nullable=True)  # Time to live/expiration
+    meta_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now())  # Creation timestamp
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    observations = relationship("MemoryObservation", back_populates="entity", cascade="all, delete-orphan")
+
+class MemoryObservation(Base):
+    __tablename__ = "memory_observations"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    entity_name = Column(String(255), ForeignKey("memory_entities.entity_name"), nullable=False)
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    entity = relationship("MemoryEntity", back_populates="observations")
+
+class MemoryRelation(Base):
+    __tablename__ = "memory_relations"
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    from_entity = Column(String(255), ForeignKey("memory_entities.entity_name"), nullable=False)
+    to_entity = Column(String(255), ForeignKey("memory_entities.entity_name"), nullable=False)
+    relation_type = Column(String(255), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        # Unique constraint for (from_entity, to_entity, relation_type)
+        {'sqlite_autoincrement': True},
+    ) 

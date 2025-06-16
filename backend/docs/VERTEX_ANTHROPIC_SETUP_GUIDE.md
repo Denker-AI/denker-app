@@ -17,7 +17,7 @@ This guide provides comprehensive instructions for setting up and using Anthropi
 
 2. **Create a JSON key file** for this service account and securely store it in one of these locations:
    - `/app/vertexai.json` (in Docker)
-   - `backend/vertexai.json` (in your project directory)
+   - `local-backend/vertexai.json` (in your project directory)
 
 3. **Set environment variable** to point to your key file:
    ```bash
@@ -26,7 +26,7 @@ This guide provides comprehensive instructions for setting up and using Anthropi
 
 ## 2. Configuring the Application
 
-Update your configuration file `backend/mcp_local/mcp_agent.config.yaml` with the following settings:
+Update your configuration file `local-backend/mcp_local/mcp_agent.config.yaml` with the following settings:
 
 ```yaml
 vertex:

@@ -13,7 +13,7 @@ import LoadingIndicator from '../components/SubWindow/LoadingIndicator';
 import ErrorIndicator from '../components/SubWindow/ErrorIndicator';
 
 // Hooks
-import useSubWindow from '../hooks/useSubWindow';
+import { useSubWindow } from '../hooks/useSubWindow';
 
 // Define the option type
 export interface Option {
@@ -26,6 +26,7 @@ export interface Option {
 const SubWindow: React.FC = () => {
   const {
     isLoading,
+    isAnalyzing,
     error,
     selectedText,
     options,
@@ -53,6 +54,23 @@ const SubWindow: React.FC = () => {
     
     return { ...option, icon };
   });
+
+  // Determine what to show based on state
+  const getContentComponent = () => {
+    if (error) {
+      return <ErrorIndicator message={error} />;
+    }
+    
+    if (isAnalyzing) {
+      return <LoadingIndicator message="Analyzing your content..." />;
+    }
+    
+    if (options.length === 0) {
+      return <LoadingIndicator message="No options available. Try again with different content." />;
+    }
+    
+    return <OptionsGrid options={optionsWithIcons} onOptionSelect={handleOptionSelect} />;
+  };
 
   return (
     <Box
@@ -82,15 +100,7 @@ const SubWindow: React.FC = () => {
           backdropFilter: 'blur(10px)',
         }}
       >
-        {error ? (
-          <ErrorIndicator message={error} />
-        ) : isLoading ? (
-          <LoadingIndicator message="Processing your request..." />
-        ) : options.length === 0 ? (
-          <LoadingIndicator message="No options available. Try again with different content." />
-        ) : (
-          <OptionsGrid options={optionsWithIcons} onOptionSelect={handleOptionSelect} />
-        )}
+        {getContentComponent()}
       </Box>
     </Box>
   );

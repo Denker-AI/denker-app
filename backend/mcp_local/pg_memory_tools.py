@@ -473,5 +473,19 @@ class PGMemoryTools:
         
         return {"status": "success", "updated": result.get("created", 0)}
 
+    async def mcp_memory_health_check(self) -> bool:
+        """Check PostgreSQL memory backend health by running a simple query."""
+        try:
+            if not self.db_pool:
+                logger.error("No database pool available for health check.")
+                return False
+            async with self.db_pool.acquire() as conn:
+                await conn.execute("SELECT 1")
+            logger.info("PostgreSQL memory health check succeeded.")
+            return True
+        except Exception as e:
+            logger.error(f"PostgreSQL memory health check failed: {e}")
+            return False
+
 # Initialize memory tools (lazy initialization - will connect when first used)
 memory_tools = PGMemoryTools() 

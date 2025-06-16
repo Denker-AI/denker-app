@@ -80,7 +80,10 @@ const ProfilePage: React.FC = () => {
     logout();
   };
   
-  const avatarColor = theme.palette.grey[700];
+  // More neutral avatar color compatible with system theme
+  const avatarColor = theme.palette.mode === 'dark' 
+    ? theme.palette.grey[800] 
+    : theme.palette.grey[300];
   
   const getInitials = (name?: string) => {
     if (!name) return '?';
@@ -169,7 +172,17 @@ const ProfilePage: React.FC = () => {
               height: 100,
               mb: 2,
               bgcolor: avatarColor,
+              color: theme.palette.mode === 'dark' 
+                ? theme.palette.grey[300] 
+                : theme.palette.grey[700],
               fontSize: '2rem',
+              fontWeight: 500,
+              border: `2px solid ${theme.palette.divider}`,
+              '&:hover': {
+                bgcolor: theme.palette.mode === 'dark' 
+                  ? theme.palette.grey[700] 
+                  : theme.palette.grey[400],
+              }
             }}
           >
             {/* Use user.name for initials, handle undefined case */}
@@ -248,12 +261,47 @@ const ProfilePage: React.FC = () => {
             
             <Box sx={{ mt: 2 }}>
               <Typography variant="body2" gutterBottom>
-                <strong>Account ID:</strong> {user.id}
+                <strong>Account ID:</strong> {(user as any).sub || (user as any).id || 'N/A'}
               </Typography>
               
               <Typography variant="body2" gutterBottom>
                 <strong>Account Type:</strong> Free
               </Typography>
+            </Box>
+          </Grid>
+
+          <Grid item xs={12}>
+            <Typography variant="h6" gutterBottom>
+              Support Us
+            </Typography>
+            
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="body2" sx={{ mb: 2 }}>
+                Love using Denker? Help us continue developing and improving the app by supporting us.
+              </Typography>
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <Button
+                variant="outlined"
+                color="primary"
+                component="a"
+                href="https://www.paypal.com/pools/c/9fLtxsD47R"
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => {
+                  e.preventDefault();
+                  // @ts-ignore
+                  if (window.electron?.shell?.openExternal) {
+                    // @ts-ignore
+                    window.electron.shell.openExternal('https://www.paypal.com/pools/c/9fLtxsD47R');
+                  } else {
+                    window.open('https://www.paypal.com/pools/c/9fLtxsD47R', '_blank', 'noopener,noreferrer');
+                  }
+                }}
+                  sx={{ textTransform: 'none' }}
+              >
+                Support Us
+              </Button>
+              </Box>
             </Box>
           </Grid>
         </Grid>

@@ -69,11 +69,7 @@ mcp:
         }
       description: "Search the web using Google Search API, returning relevant results with URLs"
     
-    # QuickChart server for chart generation
-    quickchart-server:
-      command: "node"
-      args: ["/usr/local/lib/node_modules/@gongrzhe/quickchart-mcp-server/build/index.js"]
-      description: "Generate visual charts from data using the QuickChart API"
+
       
     # Document Loader server for extracting content from files
     document-loader:

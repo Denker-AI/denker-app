@@ -24,7 +24,6 @@ import AuthErrorPage from './pages/AuthErrorPage';
 import HelpPage from './pages/HelpPage';
 import ContactPage from './pages/ContactPage';
 import PrivacyPolicyPage from './pages/PrivacyPolicyPage';
-import TestPage from './pages/TestPage';
 import AuthCallbackPage from './pages/AuthCallbackPage';
 
 // Auth guard component
@@ -133,7 +132,6 @@ function App() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/test" element={<TestPage />} />
             <Route
               path="/settings"
               element={

@@ -45,16 +45,63 @@ export const useConversationList = () => {
     // Return early if already loading
     if (state.loadState === ConversationLoadState.LOADING) {
       console.log('Already loading conversations, skipping duplicate load');
-      return conversations;
+      return useConversationStore.getState().conversations;
     }
     
-    // Check if we already have conversations in the store
-    if (conversations.length > 0) {
-      console.log(`Found ${conversations.length} conversations already in store, using those instead of loading`);
+    const currentConversations = useConversationStore.getState().conversations;
+    
+    // If we have persisted conversations, use them immediately but validate with API
+    if (currentConversations.length > 0) {
+      console.log('[useConversationList] Using persisted conversations:', currentConversations.length);
+      
+      // Mark as initialized immediately to prevent UI flashing
       setIsInitialized(true);
-      return conversations;
+      
+      // Auto-select first conversation if no current conversation is set
+      if (!currentConversationId) {
+        console.log('[useConversationList] Auto-selecting first conversation:', currentConversations[0].id);
+        setCurrentConversationId(currentConversations[0].id);
+      }
+      
+      // Background validation with API (don't update store if it causes issues)
+      api.getConversationsWithRetry().then(response => {
+        console.log('Background sync: Loaded conversations from API:', response.length);
+        
+                          // Only update if the data is significantly different to avoid unnecessary re-renders
+         const typedResponse = response as Array<{id: string, [key: string]: any}>;
+         const apiConversationIds = new Set(typedResponse.map(conv => conv.id));
+         const currentConversationIds = new Set(currentConversations.map(conv => conv.id));
+         
+         const hasSignificantChanges = 
+           apiConversationIds.size !== currentConversationIds.size ||
+           [...apiConversationIds].some(id => !currentConversationIds.has(id));
+        
+        if (hasSignificantChanges) {
+          console.log('Background sync: Significant changes detected, updating store');
+          const conversationsData = response.map((conv: any) => ({
+            id: conv.id,
+            title: conv.title || 'New Conversation',
+            messages: [], // We don't load messages here
+            createdAt: new Date(conv.created_at),
+            updatedAt: new Date(conv.updated_at),
+            isActive: conv.is_active,
+          }));
+          
+          setConversations(conversationsData);
+        } else {
+          console.log('Background sync: No significant changes, keeping persisted data');
+        }
+        
+      }).catch(err => {
+        console.warn('Background sync failed, continuing with persisted data:', err);
+        // Don't set error state since we have persisted data
+      });
+      
+      return currentConversations;
     }
     
+    // No persisted conversations - this is initial load, show loading
+    console.log('[useConversationList] No persisted conversations, initial load from API');
     setState({
       loadState: ConversationLoadState.LOADING,
       error: null
@@ -63,7 +110,7 @@ export const useConversationList = () => {
     try {
       // Try to load conversations with retry
       const response = await api.getConversationsWithRetry();
-      console.log('Loaded conversations from API:', response);
+      console.log('Initial load: Loaded conversations from API:', response.length);
       
       // Transform API response to match our store format
       const conversationsData = response.map((conv: any) => {
@@ -84,6 +131,90 @@ export const useConversationList = () => {
       setConversations(conversationsData);
       setIsInitialized(true);
       
+      // Handle empty conversations case - only create if we don't already have one being created
+      if (conversationsData.length === 0) {
+        // Check if there's already a conversation in the store (e.g., created by MainWindow)
+        const currentConversations = useConversationStore.getState().conversations;
+        if (currentConversations.length > 0) {
+          console.log('[useConversationList] No API conversations but found existing local conversations, skipping default creation');
+        } else {
+          console.log('[useConversationList] No conversations found, creating default conversation');
+          try {
+            // Create conversation on the server first
+            const createResponse = await api.createConversationWithRetry({
+              title: 'New Conversation'
+            });
+            
+            if (createResponse && createResponse.id) {
+              const conversationId = createResponse.id;
+              console.log('[useConversationList] Created default conversation with server ID:', conversationId);
+              
+              const defaultConversation: Conversation = {
+                id: conversationId,
+                title: 'New Conversation',
+                messages: [
+                  // Add a welcome message to ensure the conversation isn't empty
+                  {
+                    id: uuidv4(),
+                    role: 'assistant',
+                    content: 'Hi there! How can I help you today?',
+                    timestamp: new Date(),
+                    metadata: {}
+                  }
+                ],
+                createdAt: new Date(createResponse.created_at) || new Date(),
+                updatedAt: new Date(createResponse.updated_at) || new Date(),
+                isActive: true
+              };
+              
+              // Add to store and set as current
+              addConversation(defaultConversation);
+              setCurrentConversationId(conversationId);
+              
+              // Also add the welcome message to the server
+              try {
+                await api.addMessageWithRetry(conversationId, {
+                  content: 'Hi there! How can I help you today?',
+                  role: 'assistant'
+                });
+              } catch (err) {
+                console.error('[useConversationList] Failed to add welcome message to default conversation:', err);
+                // Continue anyway since the conversation was created
+              }
+            }
+          } catch (err) {
+            console.error('[useConversationList] Failed to create default conversation:', err);
+            // If server creation fails, create a local-only conversation to prevent empty state
+            const localConversation: Conversation = {
+              id: `local-${uuidv4()}`,
+              title: 'New Conversation',
+              messages: [
+                {
+                  id: uuidv4(),
+                  role: 'assistant',
+                  content: 'Hi there! How can I help you today?',
+                  timestamp: new Date(),
+                  metadata: {}
+                }
+              ],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+              isActive: true
+            };
+            
+            console.log('[useConversationList] Created fallback local conversation');
+            addConversation(localConversation);
+            setCurrentConversationId(localConversation.id);
+          }
+        }
+      } else {
+        // Auto-select first conversation if no current conversation is set
+        if (!currentConversationId) {
+          console.log('[useConversationList] Auto-selecting first conversation from API:', conversationsData[0].id);
+          setCurrentConversationId(conversationsData[0].id);
+        }
+      }
+      
       setState({
         loadState: ConversationLoadState.LOADED,
         error: null
@@ -101,7 +232,7 @@ export const useConversationList = () => {
       
       return [];
     }
-  }, [api, conversations, setConversations, state.loadState]);
+  }, [api, setConversations, addConversation, setCurrentConversationId, currentConversationId, state.loadState]);
   
   /**
    * Create a new conversation
@@ -194,7 +325,7 @@ export const useConversationList = () => {
     console.log(`Deleting conversation with ID: ${conversationId}`);
     
     // Make sure we don't attempt to delete the only conversation
-    if (conversations.length <= 1) {
+    if (useConversationStore.getState().conversations.length <= 1) {
       console.warn(`Cannot delete the only conversation. Creating a new one first.`);
       await createConversation('New Conversation');
     }
@@ -220,7 +351,7 @@ export const useConversationList = () => {
       
       return false;
     }
-  }, [api, createConversation, conversations.length, removeConversationFromStore]);
+  }, [api, createConversation, removeConversationFromStore]);
   
   /**
    * Delete all conversations
@@ -235,7 +366,7 @@ export const useConversationList = () => {
       const newId = await createConversation('New Conversation');
       
       // Get all conversation IDs except the new one
-      const idsToDelete = conversations
+      const idsToDelete = useConversationStore.getState().conversations
         .filter(conv => conv.id !== newId)
         .map(conv => conv.id);
       
@@ -271,16 +402,16 @@ export const useConversationList = () => {
       console.error('Failed to delete all conversations:', error);
       return false;
     }
-  }, [api, conversations, createConversation, removeConversationFromStore]);
+  }, [api, createConversation, removeConversationFromStore]);
   
   // Initialize conversations on mount, but only if not already initialized
   useEffect(() => {
-    console.log('[useConversationList] useEffect triggered. isInitialized:', isInitialized, 'isOnline:', isOnline);
-    if (!isInitialized && isOnline) {
-      console.log('[useConversationList] Calling loadConversations');
+    console.log('[useConversationList] useEffect triggered. isInitialized:', isInitialized);
+    if (!isInitialized) {
+      console.log('[useConversationList] Calling loadConversations for initial load.');
       loadConversations();
     }
-  }, [isInitialized, isOnline, loadConversations]);
+  }, [isInitialized, loadConversations]);
   
   // Prepare list items for UI
   const conversationList: ConversationListItem[] = conversations.map(conv => ({

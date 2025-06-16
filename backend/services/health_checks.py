@@ -66,51 +66,12 @@ class MCPHealthService:
             self.logger.error(f"Error initializing MCP app for health checks: {str(e)}")
             return False
     
-    async def check_qdrant_health(self) -> bool:
-        """
-        Check if the Qdrant server is healthy
-        
-        Returns:
-            bool: True if healthy, False otherwise
-        """
-        if not MCP_AVAILABLE or not self.mcp_app:
-            self.logger.warning("MCP Agent not available or not initialized")
-            return False
-            
-        try:
-            async with self.mcp_app.run() as app_context:
-                # Create agent to test connection
-                test_agent = Agent(
-                    name="qdrant_health_check",
-                    instruction="Test connection to Qdrant",
-                    server_names=["qdrant"]
-                )
-                
-                await test_agent.initialize()
-                
-                # List tools to verify connection
-                tools = await test_agent.list_tools()
-                
-                # Check if qdrant-store and qdrant-find are available
-                tool_names = [tool.name for tool in tools.tools] if hasattr(tools, 'tools') else []
-                self.logger.info(f"Available Qdrant tools: {tool_names}")
-                
-                # Check for exact tool names (fully-qualified)
-                has_store = "qdrant-qdrant-store" in tool_names
-                has_find = "qdrant-qdrant-find" in tool_names
-                
-                # Fallback to partial matching if exact match fails
-                if not has_store:
-                    has_store = any("-qdrant-store" in tool for tool in tool_names)
-                if not has_find:
-                    has_find = any("-qdrant-find" in tool for tool in tool_names)
-                
-                self.logger.info(f"Qdrant health check: store={has_store}, find={has_find}")
-                return has_store and has_find
-                
-        except Exception as e:
-            self.logger.error(f"Qdrant health check failed: {str(e)}")
-            return False
+    # --- MCP agent/server health checks are now handled by the local backend (Electron app) ---
+    # async def check_qdrant_health(self) -> bool:
+    #     ... (comment out full function)
+
+    def check_qdrant_health(*args, **kwargs):
+        raise NotImplementedError("Qdrant health check is now handled by the local backend (Electron app).")
     
     async def check_fetch_health(self) -> bool:
         """
@@ -253,71 +214,7 @@ class MCPHealthService:
             self.logger.error(f"Filesystem health check failed: {str(e)}")
             return False
             
-    async def check_quickchart_health(self) -> bool:
-        """
-        Check if the QuickChart server is healthy
-        
-        Returns:
-            bool: True if healthy, False otherwise
-        """
-        if not MCP_AVAILABLE or not self.mcp_app:
-            self.logger.warning("MCP Agent not available or not initialized")
-            return False
-            
-        try:
-            self.logger.info("Starting QuickChart health check")
-            async with self.mcp_app.run() as app_context:
-                # Create agent to test connection
-                test_agent = Agent(
-                    name="quickchart_health_check",
-                    instruction="Test connection to QuickChart server",
-                    server_names=["quickchart-server"]
-                )
-                
-                await test_agent.initialize()
-                
-                # List tools to verify connection
-                tools = await test_agent.list_tools()
-                
-                # Check for chart tools
-                tool_names = [tool.name for tool in tools.tools] if hasattr(tools, 'tools') else []
-                self.logger.info(f"Available QuickChart tools: {tool_names}")
-                
-                # Check for chart generation functionality
-                chart_tool = next((t for t in tool_names if "generate_chart" in t.lower()), None)
-                
-                if chart_tool:
-                    try:
-                        # Test the tool with minimal parameters
-                        test_result = await test_agent.call_tool(chart_tool, {
-                            "type": "bar",
-                            "datasets": [{
-                                "data": [1, 2, 3]
-                            }]
-                        })
-                        
-                        # If we get a URL back, the service is working
-                        is_working = not test_result.isError and any(
-                            "quickchart.io/chart" in str(content.text) 
-                            for content in test_result.content 
-                            if hasattr(content, 'text')
-                        )
-                        
-                        self.logger.info(f"QuickChart tool test result: {is_working}")
-                        return is_working
-                    except Exception as tool_error:
-                        self.logger.error(f"Error testing QuickChart tool: {str(tool_error)}")
-                        return False
-                        
-                # Fallback to just checking if the tool exists
-                has_chart = any("chart" in tool.lower() for tool in tool_names)
-                
-                self.logger.info(f"QuickChart health check result: has_chart={has_chart}")
-                return has_chart
-                
-        except Exception as e:
-            self.logger.error(f"QuickChart health check failed: {str(e)}")
-            return False
+
             
     async def check_document_loader_health(self) -> bool:
         """
@@ -413,7 +310,6 @@ class MCPHealthService:
             "fetch": False,
             "websearch": False,
             "filesystem": False,
-            "quickchart-server": False,
             "document-loader": False,
             "markdown-editor": False,
             "mcp_available": MCP_AVAILABLE
@@ -442,7 +338,6 @@ class MCPHealthService:
                 "fetch": asyncio.create_task(self.check_fetch_health()),
                 "websearch": asyncio.create_task(self.check_websearch_health()),
                 "filesystem": asyncio.create_task(self.check_filesystem_health()),
-                "quickchart-server": asyncio.create_task(self.check_quickchart_health()),
                 "document-loader": asyncio.create_task(self.check_document_loader_health()),
                 "markdown-editor": asyncio.create_task(self.check_markdown_editor_health())
             }
@@ -463,7 +358,6 @@ class MCPHealthService:
                 health_status["fetch"], 
                 health_status["websearch"], 
                 health_status["filesystem"],
-                health_status["quickchart-server"],
                 health_status["document-loader"],
                 health_status["markdown-editor"]
             ])

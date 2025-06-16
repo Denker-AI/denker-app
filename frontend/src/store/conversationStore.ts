@@ -65,7 +65,11 @@ interface ConversationState {
   
   // Helpers
   getCurrentConversation: () => Conversation | null;
-  createNewConversation: () => string;
+  // createNewConversation: () => string; // COMMENTED OUT: Unused method
+  
+  // Debug/Reset methods
+  resetStore: () => void;
+  repairConversation: (id: string) => boolean;
 }
 
 const useConversationStore = create<ConversationState>()(
@@ -376,25 +380,74 @@ const useConversationStore = create<ConversationState>()(
         return conversations.find((conv) => conv.id === currentConversationId) || null;
       },
       
-      createNewConversation: () => {
-        const id = uuidv4();
-        get().addConversation({
-          id,
-          title: 'New Conversation',
-          messages: [
-            {
-              id: uuidv4(),
-              content: 'Hi there! How can I help you today?',
-              role: 'assistant',
-              timestamp: new Date(),
-              metadata: {}
-            }
-          ],
-          createdAt: new Date(),
-          updatedAt: new Date(),
-          isActive: true,
+      // COMMENTED OUT: This method is unused and creates local-only conversations
+      // that don't sync to server properly. Use conversation.createConversation() instead.
+      // createNewConversation: () => {
+      //   const id = uuidv4();
+      //   get().addConversation({
+      //     id,
+      //     title: 'New Conversation',
+      //     messages: [
+      //       {
+      //         id: uuidv4(),
+      //         content: 'Hi there! How can I help you today?',
+      //         role: 'assistant',
+      //         timestamp: new Date(),
+      //         metadata: {}
+      //       }
+      //     ],
+      //     createdAt: new Date(),
+      //     updatedAt: new Date(),
+      //     isActive: true,
+      //   });
+      //   return id;
+      // },
+      
+      // Debug/Reset methods
+      resetStore: () => {
+        console.log('[Store] Resetting conversation store to initial state');
+        localStorage.removeItem('denker-conversations-storage');
+        set({
+          conversations: [],
+          currentConversationId: null,
+          isLoading: false,
+          error: null,
         });
-        return id;
+      },
+      
+      repairConversation: (id: string) => {
+        console.log(`[Store] Attempting to repair conversation ${id}`);
+        const state = get();
+        const conversation = state.conversations.find(c => c.id === id);
+        
+        if (!conversation) {
+          console.log(`[Store] Conversation ${id} not found, cannot repair`);
+          return false;
+        }
+        
+        // Fix any corrupted data
+        const repairedConversation = {
+          ...conversation,
+          messages: conversation.messages.map(msg => ({
+            ...msg,
+            timestamp: msg.timestamp instanceof Date ? msg.timestamp : new Date(msg.timestamp),
+            content: msg.content || '',
+            role: msg.role || 'user',
+            id: msg.id || uuidv4(),
+          })),
+          createdAt: conversation.createdAt instanceof Date ? conversation.createdAt : new Date(conversation.createdAt),
+          updatedAt: conversation.updatedAt instanceof Date ? conversation.updatedAt : new Date(conversation.updatedAt),
+        };
+        
+        // Update the conversation
+        set(state => ({
+          conversations: state.conversations.map(c => 
+            c.id === id ? repairedConversation : c
+          )
+        }));
+        
+        console.log(`[Store] Repaired conversation ${id}`);
+        return true;
       },
     }),
     {

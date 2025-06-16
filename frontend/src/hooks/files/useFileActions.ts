@@ -6,6 +6,7 @@ import {
   FileState,
   DownloadResult
 } from './types';
+import { useFileListing } from './useFileListing';
 
 /**
  * Hook for file actions like downloading and deleting files
@@ -26,6 +27,9 @@ export const useFileActions = () => {
   // Get file store actions
   const { updateFile } = useFileStore();
 
+  // Get loadFiles from useFileListing
+  const { loadFiles } = useFileListing();
+
   /**
    * Check if a file exists and is not deleted
    * @param fileId ID of the file to check
@@ -33,21 +37,21 @@ export const useFileActions = () => {
    */
   const checkFileStatus = useCallback(async (fileId: string): Promise<boolean> => {
     try {
-      const response = await api.getFileWithRetry(fileId);
+      const response = await api.getFileWithRetry(fileId) as { data?: { is_deleted?: boolean } };
       const fileData = response.data;
       
       // If the file exists in the API but is marked as deleted, update local store
-      if (fileData.is_deleted) {
+      if (fileData && fileData.is_deleted) {
         updateFile(fileId, { isDeleted: true });
         return false;
       }
       
       return true;
-    } catch (error) {
+    } catch (error: any) {
       console.error(`Error checking file status for ${fileId}:`, error);
       
       // If file not found on server, mark as deleted locally
-      if (error.response?.status === 404) {
+      if (error && error.response && error.response.status === 404) {
         updateFile(fileId, { isDeleted: true });
       }
       
@@ -112,7 +116,7 @@ export const useFileActions = () => {
       }
 
       // Download the file
-      const result = await api.downloadFile(fileId);
+      const result = await api.downloadFileWithRetry(fileId) as any;
       
       setState({
         loadState: FileLoadState.IDLE,
@@ -229,8 +233,11 @@ export const useFileActions = () => {
         return newState;
       });
       
+      // Refresh the file list
+      loadFiles();
+
       return true;
-    } catch (error) {
+    } catch (error: any) {
       const errorMessage = error instanceof Error ? error.message : 'Failed to delete file';
       console.error('Error deleting file:', errorMessage);
       
@@ -240,7 +247,7 @@ export const useFileActions = () => {
       });
       
       // If file doesn't exist in backend, still mark as deleted locally
-      if (error.response?.status === 404) {
+      if (error && error.response && error.response.status === 404) {
         updateFile(fileId, { isDeleted: true });
         
         // Dispatch event to notify other components
@@ -258,7 +265,7 @@ export const useFileActions = () => {
       
       return false;
     }
-  }, [api, processingFiles, updateFile]);
+  }, [api, processingFiles, updateFile, loadFiles]);
 
   return {
     downloadFile,

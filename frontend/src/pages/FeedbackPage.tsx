@@ -18,8 +18,7 @@ import {
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import { useNavigate } from 'react-router-dom';
 
-// API
-import { apiService } from '../services/apiService';
+
 
 // Types
 type FeedbackType = 'bug' | 'feature' | 'general';
@@ -32,7 +31,6 @@ const FeedbackPage: React.FC = () => {
   const [feedbackType, setFeedbackType] = useState<FeedbackType>('general');
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
-  const [email, setEmail] = useState('');
   
   // UI state
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,33 +60,48 @@ const FeedbackPage: React.FC = () => {
     setIsSubmitting(true);
     
     try {
-      await apiService.post('/feedback', {
-        type: feedbackType,
-        title,
-        description,
-        email: email || undefined,
-      });
+      // Create email content
+      const emailSubject = `Denker Feedback: ${feedbackType.charAt(0).toUpperCase() + feedbackType.slice(1)} - ${title}`;
+      const emailBody = `
+Feedback Type: ${feedbackType.charAt(0).toUpperCase() + feedbackType.slice(1)}
+Title: ${title}
+
+Description:
+${description}
+
+---
+Sent from Denker App
+      `.trim();
+      
+      // Create mailto URL
+      const mailtoUrl = `mailto:info@denker.ai?subject=${encodeURIComponent(emailSubject)}&body=${encodeURIComponent(emailBody)}`;
+      
+      // Try to open with Electron shell first, then fallback to window.open
+      // @ts-ignore
+      if (window.electron?.shell?.openExternal) {
+        // @ts-ignore
+        await window.electron.shell.openExternal(mailtoUrl);
+      } else {
+        window.open(mailtoUrl, '_self');
+      }
       
       setAlert({
         open: true,
-        message: 'Thank you for your feedback!',
+        message: 'Email client opened! Please send the email to complete your feedback submission.',
         severity: 'success',
       });
       
-      // Reset form
-      setFeedbackType('general');
-      setTitle('');
-      setDescription('');
-      setEmail('');
-      
-      // Navigate back after a short delay
+      // Reset form after successful email opening
       setTimeout(() => {
-        navigate('/');
-      }, 2000);
+        setFeedbackType('general');
+        setTitle('');
+        setDescription('');
+      }, 1000);
+      
     } catch (error) {
       setAlert({
         open: true,
-        message: 'Failed to submit feedback. Please try again.',
+        message: 'Failed to open email client. Please try again or email info@denker.ai directly.',
         severity: 'error',
       });
     } finally {
@@ -139,13 +152,13 @@ const FeedbackPage: React.FC = () => {
           overflow: 'auto',
         }}
       >
-        <Typography variant="body1" paragraph>
-          We value your feedback! Please let us know about any bugs, feature requests, or general feedback you have about Denker.
+        <Typography variant="body2" paragraph>
+          We value your feedback! Please let us know about any bugs, feature requests, or general feedback you have about Denker. Clicking "Send via Email" will open your default email client with a pre-filled message to info@denker.ai.
         </Typography>
         
         <Box component="form" onSubmit={handleSubmit} noValidate sx={{ mt: 3 }}>
           <FormControl component="fieldset" sx={{ mb: 3 }}>
-            <Typography variant="subtitle1" gutterBottom>
+            <Typography variant="body2" gutterBottom sx={{ fontWeight: 600 }}>
               Feedback Type*
             </Typography>
             <RadioGroup
@@ -188,18 +201,7 @@ const FeedbackPage: React.FC = () => {
             sx={{ mb: 3 }}
           />
           
-          <TextField
-            margin="normal"
-            fullWidth
-            id="email"
-            label="Email (optional)"
-            name="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            variant="outlined"
-            helperText="Provide your email if you'd like us to follow up with you"
-            sx={{ mb: 3 }}
-          />
+
           
           <Box sx={{ display: 'flex', justifyContent: 'flex-end', mt: 2 }}>
             <Button
@@ -216,8 +218,43 @@ const FeedbackPage: React.FC = () => {
               disabled={isSubmitting}
               startIcon={isSubmitting ? <CircularProgress size={20} /> : null}
             >
-              Submit Feedback
+              Send via Email
             </Button>
+          </Box>
+        </Box>
+
+        {/* Meeting arrangement section - moved below submit button */}
+        <Box sx={{ mt: 3, p: 2, backgroundColor: 'rgba(25, 118, 210, 0.08)', borderRadius: 1, border: '1px solid rgba(25, 118, 210, 0.2)' }}>
+            <Box>
+            <Typography variant="body1" gutterBottom sx={{ fontWeight: 600 }}>
+                Arrange a meeting with us
+              </Typography>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+                Want to discuss your feedback in person?
+              </Typography>
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <Button
+              variant="outlined"
+              color="primary"
+              component="a"
+              href="https://calendar.notion.so/meet/juanzhang/denkerfeedback"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.preventDefault();
+                // @ts-ignore
+                if (window.electron?.shell?.openExternal) {
+                  // @ts-ignore
+                  window.electron.shell.openExternal('https://calendar.notion.so/meet/juanzhang/denkerfeedback');
+                } else {
+                  window.open('https://calendar.notion.so/meet/juanzhang/denkerfeedback', '_blank', 'noopener,noreferrer');
+                }
+              }}
+                sx={{ textTransform: 'none' }}
+            >
+              Schedule Meeting
+            </Button>
+            </Box>
           </Box>
         </Box>
       </Paper>

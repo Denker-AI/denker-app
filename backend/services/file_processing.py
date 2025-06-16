@@ -17,6 +17,12 @@ from unstructured.partition.image import partition_image
 
 logger = logging.getLogger(__name__)
 
+# --- MCP/coordinator agent logic is now handled by the local backend (Electron app) ---
+# from mcp_agent.app import MCPApp
+# from mcp_agent.agents.agent import Agent
+# from mcp_local.coordinator_agent import CoordinatorAgent
+# ... (comment out any related code)
+
 def extract_content(file_path: str) -> Optional[str]:
     """
     Extract content from a file based on its extension.
@@ -121,4 +127,7 @@ def extract_image_content(file_path: str) -> Optional[str]:
         return text
     except Exception as e:
         logger.error(f"Error extracting text from image {file_path}: {str(e)}")
-        return f"[Image file that could not be processed: {os.path.basename(file_path)}]" 
+        return f"[Image file that could not be processed: {os.path.basename(file_path)}]"
+
+def process_file_with_mcp_qdrant(*args, **kwargs):
+    raise NotImplementedError("File processing is now handled by the local backend (Electron app).") 

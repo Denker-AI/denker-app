@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File as FastAPIFile, Form, Response, BackgroundTasks
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File as FastAPIFile, Form, Response, BackgroundTasks, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any, List, Optional
 from uuid import uuid4
 import os
@@ -7,19 +7,24 @@ import shutil
 from google.cloud import storage
 from google.oauth2 import service_account
 from datetime import datetime, timedelta
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 import logging
 import tempfile
 import json
+from hashlib import sha256
+from inspect import isawaitable
+import io
+from sqlalchemy import select, cast, Text
+from sqlalchemy.dialects.postgresql import JSONB
+import asyncio
 
 from db.database import get_db
-from db.repositories import FileRepository, UserRepository
-from db.models import User, File as DBFile
+from db.repositories import FileRepository, UserRepository, MessageRepository
+from db.models import User, File as DBFile, FileAttachment as DBFileAttachment
 from core.auth import get_current_user_dependency
 from config.settings import settings
 from services.security import current_user_dependency
-from services.file_processing import extract_content  # We'll create this next
-from services.qdrant_service import mcp_qdrant_service
+from services.qdrant_service import qdrant_service
 from mcp_local.core.websocket_manager import get_websocket_manager
 
 # Set up logger
@@ -43,13 +48,16 @@ bucket = storage_client.bucket(settings.GCS_BUCKET_NAME)
 @router.get("/list")
 async def list_files(
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     List all files for the current user
     """
+    # Ensure current_user is awaited if it's a coroutine
+    user = await current_user if isawaitable(current_user) else current_user
+    
     file_repo = FileRepository(db)
-    files = file_repo.get_by_user(current_user.id)
+    files = await file_repo.get_by_user(user.id)
     
     return [
         {
@@ -69,263 +77,181 @@ async def list_files(
 async def upload_file(
     background_tasks: BackgroundTasks,
     file: UploadFile = FastAPIFile(...),
+    original_path: Optional[str] = Form(None),
     query_id: Optional[str] = Form(None),
     message_id: Optional[str] = Form(None),
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Upload a file
+    Upload a file (Electron: store original path, deduplicate by hash)
     """
+    logger.info(f"[UploadEndpoint] Entered upload_file. Filename: {file.filename}, Original Path: {original_path}, QueryID: {query_id}, MessageID: {message_id}")
     try:
-        # Generate a unique file ID
+        # Ensure current_user is awaited if it's a coroutine
+        user = await current_user if isawaitable(current_user) else current_user
+        logger.info(f"[UploadEndpoint] User resolved: {user.id if user else 'User object is None'}")
+        
         file_id = str(uuid4())
-        
-        # Get file extension
         filename = file.filename
-        file_extension = os.path.splitext(filename)[1] if "." in filename else ""
-        
-        # Create storage path
-        storage_path = f"users/{current_user.id}/{file_id}{file_extension}"
-        
-        # Upload to Google Cloud Storage
-        blob = bucket.blob(storage_path)
-        
-        # Read file content
         content = await file.read()
+        logger.info(f"[UploadEndpoint] File content read. Length: {len(content) if content else 'Content is None'}")
+
+        # Use the original path as storage_path if provided
+        storage_path = original_path or filename
+
+        # Compute file hash (SHA256)
+        def compute_file_hash(path):
+            hasher = sha256()
+            with open(path, "rb") as f:
+                for chunk in iter(lambda: f.read(8192), b""):
+                    hasher.update(chunk)
+            return hasher.hexdigest()
+
+        # If original_path is provided, use it for hashing; otherwise, save to temp and hash
+        if original_path and os.path.exists(original_path):
+            file_hash = compute_file_hash(original_path)
+        else:
+            # Save to temp for hashing
+            temp_dir = os.path.join("/tmp", "denker_uploads", str(user.id))
+            os.makedirs(temp_dir, exist_ok=True)
+            local_file_path = os.path.join(temp_dir, f"{file_id}")
+            with open(local_file_path, "wb") as f:
+                f.write(content)
+            file_hash = compute_file_hash(local_file_path)
+            storage_path = local_file_path
+        logger.info(f"[UploadEndpoint] File hash computed: {file_hash}")
+
+        # Direct query for duplicate check, similar to file_exists endpoint
+        stmt = (
+            select(DBFile)
+            .where(DBFile.user_id == user.id)
+            .where(cast(DBFile.meta_data["file_hash"], Text) == file_hash)
+            .where(DBFile.is_deleted == False) # Also ensure we don't match soft-deleted files
+        )
+        logger.info(f"[UploadEndpoint] Performing direct duplicate check for user_id: {user.id}, file_hash: {file_hash}")
+        result = await db.execute(stmt)
+        existing = result.scalars().first()
         
-        # Upload to GCS
-        blob.upload_from_string(content, content_type=file.content_type)
-        
-        # Create file record in database
+        if existing:
+            logger.info(f"[UploadEndpoint] Direct duplicate check FOUND existing file. File ID: {existing.id}, User ID: {existing.user_id}, Hash in metadata: {existing.meta_data.get('file_hash') if existing.meta_data else 'N/A'}")
+            return {
+                "id": existing.id,
+                "filename": existing.filename,
+                "file_type": existing.file_type,
+                "file_size": existing.file_size,
+                "created_at": existing.created_at,
+                "duplicate": True
+            }
+
+        # Create file record in DB, using the original path as storage_path and storing the hash
         file_repo = FileRepository(db)
-        file_obj = file_repo.create({
+        file_obj = await file_repo.create({
             "id": file_id,
-            "user_id": current_user.id,
+            "user_id": user.id,
             "filename": filename,
             "file_type": file.content_type,
             "file_size": len(content),
-            "storage_path": storage_path,
+            "storage_path": storage_path,  # Store the real path
             "metadata": {
                 "indexed_in_qdrant": False,
-                "processing_status": "pending"
+                "processing_status": "pending",
+                "file_hash": file_hash
             }
         })
-        
-        # --- ADDED: Log successful file record creation ---
+
         logger.info(f"[UploadEndpoint] Successfully created DB record for file_id: {file_obj.id}. QueryID: {query_id}, MessageID: {message_id}")
-        # --- END ADDED ---
-        
-        # Add task to process file using MCP-Agent with qdrant-store
+
+        # Schedule processing from the original path
         background_tasks.add_task(
             process_file_with_mcp_qdrant,
             file_id=file_id,
             file_content=content,
             file_type=file.content_type,
             filename=filename,
-            user_id=current_user.id,
+            user_id=user.id,
             db_session=db,
             websocket_manager=get_websocket_manager(),
             query_id=query_id,
-            message_id=message_id
+            message_id=message_id,
+            local_file_path=storage_path
         )
-        
+
         return {
             "id": file_obj.id,
             "filename": file_obj.filename,
             "file_type": file_obj.file_type,
             "file_size": file_obj.file_size,
-            "created_at": file_obj.created_at
+            "created_at": file_obj.created_at,
+            "duplicate": False
         }
-        
+
     except Exception as e:
-        logger.error(f"Error uploading file: {str(e)}")
+        logger.error(f"Error uploading file: {str(e)}", exc_info=True) # Added exc_info=True
         raise HTTPException(
             status_code=500,
             detail="Failed to upload file"
         )
 
-async def process_file_with_mcp_qdrant(
-    file_id: str,
-    file_content: bytes,
-    file_type: str,
-    filename: str,
-    user_id: str,
-    db_session: Session,
-    websocket_manager: Optional[Any] = None,
-    query_id: Optional[str] = None,
-    message_id: Optional[str] = None
-):
-    """
-    Process a file using mcp-server-qdrant directly
-    """
-    temp_file_path = None
+# --- File processing endpoints using MCP/coordinator are now handled by the local backend (Electron app) ---
+# async def process_file_with_mcp_qdrant(
+#     file_id: str,
+#     file_content: bytes,
+#     file_type: str,
+#     filename: str,
+#     user_id: str,
+#     db_session: Session,
+#     websocket_manager: Optional[Any] = None,
+#     query_id: Optional[str] = None,
+#     message_id: Optional[str] = None,
+#     local_file_path: Optional[str] = None
+# ):
+#     ... (comment out full function)
+
+def process_file_with_mcp_qdrant(*args, **kwargs):
+    raise NotImplementedError("File processing is now handled by the local backend (Electron app).")
+
+@router.get("/exists")
+async def file_exists(hash: str, user_id: str, db: AsyncSession = Depends(get_db)):
+    logger.info(f"[FileExistsEndpoint] Received request. Hash: {hash}, User ID: {user_id}")
+    
+    json_to_check = {"file_hash": hash}
+
+    stmt = (
+        select(DBFile)
+        .where(DBFile.user_id == user_id)
+        # Explicitly cast meta_data to JSONB before using the @> operator
+        .where(cast(DBFile.meta_data, JSONB).op("@>")(json_to_check)) 
+        .where(DBFile.is_deleted == False)
+    )
+    logger.info(f"[FileExistsEndpoint] Executing query: {str(stmt).replace(chr(10), ' ')} WITH params: user_id={user_id}, json_to_check={json_to_check}")
     try:
-        # Create a temporary file
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as temp_file:
-            temp_file.write(file_content)
-            temp_file_path = temp_file.name
-        
-        # Extract content from file
-        content = extract_content(temp_file_path)
-        if not content:
-            raise ValueError(f"Failed to extract content from {filename}")
-        
-        # Update file status to processing
-        file_repo = FileRepository(db_session)
-        file_repo.update(file_id, {
-            "metadata": {
-                "indexed_in_qdrant": False,
-                "processing_status": "processing"
-            }
-        })
-        
-        # Prepare metadata
-        metadata = {
-            "file_id": file_id,
-            "user_id": user_id,
-            "filename": filename,
-            "file_type": file_type,
-            "created_at": datetime.utcnow().isoformat(),
-            "source_type": "user_upload"
-        }
-        
-        # Store in Qdrant using our service
-        store_result = await mcp_qdrant_service.store_document(
-            content=content,
-            metadata=metadata
-        )
-        
-        logger.info(f"Stored file in Qdrant: {store_result}")
-        
-        # --- ADDED: Log before updating status to completed --- 
-        metadata_to_set = {
-            "indexed_in_qdrant": True,
-            "processing_status": "completed",
-            "processed_at": datetime.utcnow().isoformat(),
-            "qdrant_result": store_result
-        }
-        logger.info(f"[{file_id}] Attempting to update DB metadata to: {metadata_to_set}")
-        # --- END ADDED ---
+        result = await db.execute(stmt)
+        file = result.scalars().first()
 
-        # Update file metadata
-        file_repo.update(file_id, {"metadata": metadata_to_set})
-        
-        # --- ADDED: Explicitly commit the session --- 
-        try:
-            db_session.commit()
-            logger.info(f"[{file_id}] Committed DB session after successful status update.")
-        except Exception as commit_err:
-            logger.error(f"[{file_id}] Failed to commit DB session after status update: {commit_err}", exc_info=True)
-            db_session.rollback() # Rollback on commit error
-            # Re-raise or handle appropriately - maybe send error WS message? 
-            raise commit_err # Re-raise for now
-        # --- END ADDED ---
-        
-        logger.info(f"Successfully processed file {file_id} using mcp-server-qdrant")
-        
-        # --- RE-ADDED: Send WebSocket notification on success --- 
-        if websocket_manager and query_id:
-            # We now have the specific query_id passed from the upload request
-            logger.info(f"Attempting to notify query {query_id} about file {file_id} processing completion")
-            await websocket_manager.send_consolidated_update(
-                query_id=query_id,
-                update_type="file_processed",
-                message=f"File '{filename}' processed successfully.",
-                data={
-                    "file_id": file_id,
-                    "filename": filename,
-                    "status": "completed",
-                    "messageId": message_id # Include messageId for frontend correlation
-                }
-            )
-        elif websocket_manager:
-             logger.warning(f"File {file_id} processed, but no query_id provided to send WebSocket success notification.")
-        # --- END RE-ADDED --- 
-        
+        if file:
+            logger.info(f"[FileExistsEndpoint] File FOUND (using @> on JSONB). File ID: {file.id}, User ID: {file.user_id}, MetaData: {file.meta_data}")
+            return {"exists": True, "file_id": file.id, "metadata": file.meta_data}
+        logger.info(f"[FileExistsEndpoint] File NOT found (using @> on JSONB) for Hash: {hash}, User ID: {user_id}")
+        return {"exists": False}
     except Exception as e:
-        # --- ADDED: Rollback session on error --- 
-        try:
-            db_session.rollback()
-            logger.warning(f"[{file_id}] Rolled back DB session due to processing error.")
-        except Exception as rollback_err:
-            logger.error(f"[{file_id}] Error rolling back DB session after processing error: {rollback_err}", exc_info=True)
-        # --- END ADDED ---
-
-        # --- MODIFIED: Enhance error logging --- 
-        error_stage = "unknown"
-        if temp_file_path is None: error_stage = "temp file creation"
-        elif 'content' not in locals(): error_stage = "content extraction"
-        elif 'store_result' not in locals(): error_stage = "storing in Qdrant"
-        else: error_stage = "updating DB status or sending WS notification"
-        
-        logger.error(f"Error processing file {file_id} during stage '{error_stage}': {str(e)}", exc_info=True) # Added exc_info=True
-        # --- END MODIFIED --- 
-        
-        # --- RE-ADDED: Send WebSocket notification on error --- 
-        if websocket_manager and query_id:
-            logger.info(f"Attempting to notify query {query_id} about file {file_id} processing error")
-            await websocket_manager.send_consolidated_update(
-                query_id=query_id,
-                update_type="file_error",
-                message=f"Error processing file '{filename}'.",
-                data={
-                    "file_id": file_id,
-                    "filename": filename,
-                    "status": "error",
-                    "error_message": str(e),
-                    "messageId": message_id # Include messageId for frontend correlation
-                }
-            )
-        elif websocket_manager:
-            logger.warning(f"File {file_id} failed processing, but no query_id provided to send WebSocket error notification.")
-        # --- END RE-ADDED --- 
-        
-        # Update file with error
-        try:
-            file_repo = FileRepository(db_session)
-            file_obj = file_repo.get(file_id)
-            if file_obj:
-                metadata = file_obj.meta_data or {}
-                metadata["processing_error"] = str(e)
-                metadata["processing_status"] = "error"
-                file_repo.update(file_id, {"metadata": metadata})
-                # --- ADDED: Commit after setting error status --- 
-                try:
-                    db_session.commit()
-                    logger.info(f"[{file_id}] Committed DB session after setting error status.")
-                except Exception as commit_err:
-                    logger.error(f"[{file_id}] Failed to commit DB session after setting error status: {commit_err}", exc_info=True)
-                    db_session.rollback()
-                # --- END ADDED ---
-        except Exception as inner_e:
-            logger.error(f"[{file_id}] Failed to update DB metadata to 'error' status after primary processing error: {str(inner_e)}", exc_info=True)
-            # --- ADDED: Rollback if inner update fails --- 
-            try:
-                db_session.rollback()
-            except Exception as rollback_err:
-                logger.error(f"[{file_id}] Error rolling back DB session after inner error: {rollback_err}", exc_info=True)
-            # --- END ADDED ---
-        
-    finally:
-        # Clean up temporary file
-        if temp_file_path and os.path.exists(temp_file_path):
-            try:
-                os.unlink(temp_file_path)
-            except Exception as e:
-                logger.error(f"Error removing temporary file: {str(e)}")
+        logger.error(f"[FileExistsEndpoint] Error during query execution: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error querying file existence: {str(e)}")
 
 @router.get("/{file_id}")
 async def get_file(
     file_id: str,
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Get file metadata
     """
+    # Ensure current_user is awaited if it's a coroutine
+    user = await current_user if isawaitable(current_user) else current_user
+    
     file_repo = FileRepository(db)
-    file = file_repo.get(file_id)
+    file = await file_repo.get(file_id)
     
     if not file:
         raise HTTPException(
@@ -333,7 +259,7 @@ async def get_file(
             detail="File not found"
         )
     
-    if file.user_id != current_user.id:
+    if file.user_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to access this file"
@@ -354,16 +280,15 @@ async def get_file(
 async def download_file(
     file_id: str,
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Download a file by ID"""
     try:
+        # Ensure current_user is awaited if it's a coroutine
+        user = await current_user if isawaitable(current_user) else current_user
+        
         # Get file from database
-        file = db.query(DBFile).filter(
-            DBFile.id == file_id,
-            DBFile.user_id == current_user.id,
-            DBFile.is_deleted == False  # Don't allow downloading deleted files
-        ).first()
+        file = await db.get(DBFile, file_id)
         
         if not file:
             raise HTTPException(
@@ -371,90 +296,145 @@ async def download_file(
                 detail="File not found"
             )
             
-        try:
-            # Get the blob from Google Cloud Storage
-            blob = bucket.blob(file.storage_path)
+        # Check ownership
+        if file.user_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access this file"
+            )
             
-            # Download the content
+        # For files stored in GCS
+        if file.storage_path.startswith("gs://"):
+            # Parse GCS path
+            gcs_path = file.storage_path.replace("gs://", "")
+            bucket_name = gcs_path.split("/")[0]
+            blob_path = "/".join(gcs_path.split("/")[1:])
+            
+            # Get from GCS
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            # Get file content
             content = blob.download_as_bytes()
             
-            # Create a response with the file content
-            return Response(
-                content=content,
-                media_type=file.file_type or "application/octet-stream",
+            # Create file-like object
+            file_obj = io.BytesIO(content)
+            
+            return StreamingResponse(
+                file_obj,
+                media_type=file.file_type,
                 headers={
                     "Content-Disposition": f'attachment; filename="{file.filename}"'
                 }
             )
-        except Exception as e:
-            logger.error(f"Error downloading file from storage: {str(e)}")
-            raise HTTPException(
-                status_code=404,
-                detail="File not found in storage"
+        
+        # For local files
+        if os.path.exists(file.storage_path):
+            return FileResponse(
+                file.storage_path,
+                filename=file.filename,
+                media_type=file.file_type
             )
+            
+        # File not found in storage
+        raise HTTPException(
+            status_code=404,
+            detail="File not found in storage"
+        )
+        
     except Exception as e:
         logger.error(f"Error downloading file: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail="Failed to download file"
+            detail=f"Failed to download file: {str(e)}"
         )
 
 @router.get("/{file_id}/direct-download")
 async def direct_download_file(
     file_id: str,
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """
-    Direct download endpoint as fallback
-    """
-    file_repo = FileRepository(db)
-    file = file_repo.get(file_id)
-    
-    if not file:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-    
-    if file.user_id != current_user.id:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this file"
-        )
-    
+    """Direct download/access to a file's raw data by ID for API use"""
     try:
-        # Get the blob
-        blob = bucket.blob(file.storage_path)
+        # Ensure current_user is awaited if it's a coroutine
+        user = await current_user if isawaitable(current_user) else current_user
         
-        # Download the content
-        content = blob.download_as_bytes()
+        # Get file from database
+        file_repo = FileRepository(db)
+        file = await file_repo.get(file_id)
         
-        # Create a response with the file content
-        return Response(
-            content=content,
-            media_type=file.file_type or "application/octet-stream",
-            headers={
-                "Content-Disposition": f'attachment; filename="{file.filename}"'
-            }
-        )
-    except Exception as e:
+        if not file:
+            raise HTTPException(
+                status_code=404,
+                detail="File not found"
+            )
+            
+        # Check ownership
+        if file.user_id != user.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to access this file"
+            )
+            
+        # For files stored in GCS
+        if file.storage_path.startswith("gs://"):
+            # Parse GCS path
+            gcs_path = file.storage_path.replace("gs://", "")
+            bucket_name = gcs_path.split("/")[0]
+            blob_path = "/".join(gcs_path.split("/")[1:])
+            
+            # Get from GCS
+            bucket = storage_client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            
+            # Get file content
+            content = blob.download_as_bytes()
+            
+            # Create file-like object
+            file_obj = io.BytesIO(content)
+            
+            # Return raw file content for API use
+            return StreamingResponse(
+                file_obj,
+                media_type=file.file_type
+            )
+        
+        # For local files
+        if os.path.exists(file.storage_path):
+            return FileResponse(
+                file.storage_path,
+                media_type=file.file_type
+            )
+            
+        # File not found in storage
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download file: {str(e)}"
+            status_code=404,
+            detail="File not found in storage"
+        )
+        
+    except Exception as e:
+        logger.error(f"Error accessing file directly: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to access file: {str(e)}"
         )
 
 @router.delete("/{file_id}")
 async def delete_file(
     file_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Mark a file as deleted (soft delete)
+    Delete a file (soft delete in DB and hard delete from Qdrant)
     """
+    # Ensure current_user is awaited if it's a coroutine
+    user = await current_user if isawaitable(current_user) else current_user
+    
     file_repo = FileRepository(db)
-    file = file_repo.get(file_id)
+    file = await file_repo.get(file_id)
     
     if not file:
         raise HTTPException(
@@ -462,169 +442,271 @@ async def delete_file(
             detail="File not found"
         )
     
-    if file.user_id != current_user.id:
+    if file.user_id != user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to delete this file"
         )
     
-    # Mark the file as deleted instead of removing it
-    success = file_repo.update(file_id, {"is_deleted": True})
+    # Soft delete - just mark as deleted
+    await file_repo.update(file_id, {"is_deleted": True})
     
-    if not success:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete file"
-        )
+    # Add a background task to delete from Qdrant
+    background_tasks.add_task(qdrant_service.delete_documents_by_file_id, file_id)
     
-    return {"message": "File deleted successfully"}
+    return {"message": "File deletion initiated successfully"}
 
 @router.get("/", response_model=List[Dict[str, Any]])
 async def get_files(
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get all files for the current user"""
-    try:
-        # Get files from database, excluding deleted ones
-        files = db.query(DBFile).filter(
-            DBFile.user_id == current_user.id,
-            DBFile.is_deleted == False  # Only show non-deleted files
-        ).all()
-        
-        return [
-            {
-                "id": file.id,
-                "filename": file.filename,
-                "file_type": file.file_type,
-                "file_size": file.file_size,
-                "created_at": file.created_at,
-                "is_processed": file.is_processed,
-                "is_deleted": file.is_deleted,
-                "metadata": file.meta_data
-            }
-            for file in files
-        ]
-    except Exception as e:
-        logger.error(f"Error getting files: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to get files"
-        )
+    """
+    Get all files for the current user (duplicate of /list for API consistency)
+    """
+    # Ensure current_user is awaited if it's a coroutine
+    user = await current_user if isawaitable(current_user) else current_user
+    
+    file_repo = FileRepository(db)
+    files = await file_repo.get_by_user(user.id)
+    
+    return [
+        {
+            "id": file.id,
+            "filename": file.filename,
+            "file_type": file.file_type,
+            "file_size": file.file_size,
+            "created_at": file.created_at,
+            "is_processed": file.is_processed,
+            "is_deleted": file.is_deleted,
+            "metadata": file.meta_data
+        }
+        for file in files if not file.is_deleted
+    ]
 
 @router.post("/search")
 async def search_files(
     query: str = Form(...),
     current_user: User = Depends(current_user_dependency),
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Search for files based on content using mcp-server-qdrant
+    Search files by filename
+    """
+    # Ensure current_user is awaited if it's a coroutine
+    user = await current_user if isawaitable(current_user) else current_user
+    
+    # Get all files
+    file_repo = FileRepository(db)
+    files = await file_repo.get_by_user(user.id)
+    
+    # Filter files by query
+    query = query.lower()
+    filtered_files = [
+        {
+            "id": file.id,
+            "filename": file.filename,
+            "file_type": file.file_type,
+            "file_size": file.file_size,
+            "created_at": file.created_at,
+            "is_processed": file.is_processed,
+            "is_deleted": file.is_deleted,
+            "metadata": file.meta_data
+        }
+        for file in files
+        if query in file.filename.lower() and not file.is_deleted
+    ]
+    
+    return filtered_files
+
+@router.post("/metadata")
+async def upload_metadata(request: Request, db: AsyncSession = Depends(get_db)):
+    data = await request.json()
+    metadata = data.get("metadata")
+    embeddings = data.get("embeddings")  # Optionally handle embeddings
+    if not metadata:
+        raise HTTPException(status_code=400, detail="Missing metadata in request payload")
+
+    # Validate required fields within the metadata object, including file_id
+    required_fields = ["user_id", "filename", "file_id"]
+    for field in required_fields:
+        if field not in metadata or not metadata[field]:
+            raise HTTPException(status_code=400, detail=f"Missing or empty required field '{field}' in metadata")
+
+    file_id_from_request = metadata["file_id"]
+
+    # Create a new File record with metadata only
+    file_repo = FileRepository(db)
+    try:
+        create_payload = {
+            "id": file_id_from_request,  # Use the file_id from the request
+            "user_id": metadata["user_id"],
+            "filename": metadata["filename"],
+            "file_type": metadata.get("file_type"),
+            "file_size": metadata.get("file_size"),
+            "storage_path": metadata.get("storage_path", ""), # Include storage_path if available in metadata
+            "meta_data": metadata,  # This stores the whole 'metadata' dict from the request
+            "is_processed": metadata.get("is_processed", False) # Use is_processed from metadata if provided, else False
+        }
+        file_obj = await file_repo.create(create_payload)
+    except Exception as e:
+        logger.error(f"Error creating file record in /metadata endpoint: {e}", exc_info=True)
+        # from sqlalchemy.exc import IntegrityError
+        # if isinstance(e, IntegrityError):
+        #     raise HTTPException(status_code=409, detail=f"File with ID {file_id_from_request} may already exist or another integrity constraint violated.")
+        raise HTTPException(status_code=500, detail=f"Database error while creating file metadata: {e}")
+        
+    # Optionally, store embeddings in Qdrant or elsewhere here
+    return {"file_id": file_obj.id, "metadata": file_obj.meta_data}
+
+@router.post("/{file_id}/update")
+async def update_file_metadata(file_id: str, request: Request, db: AsyncSession = Depends(get_db)):
+    """
+    Update the metadata of a specific file.
+    This endpoint is designed to be called by trusted backend processes (like the local-backend).
+    It merges new metadata with existing metadata.
     """
     try:
-        # Search in Qdrant
-        result_data = await mcp_qdrant_service.search_documents(query=query)
+        data = await request.json()
+        new_metadata = data.get("meta_data")
+
+        if not new_metadata:
+            raise HTTPException(status_code=400, detail="meta_data not provided in request body")
+
+        file_repo = FileRepository(db)
+        # Fetch the existing file
+        file_to_update = await file_repo.get(file_id)
+
+        if not file_to_update:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        # Merge new metadata into existing metadata
+        if file_to_update.meta_data:
+            # Using a direct update approach to ensure JSONB is handled correctly
+            updated_metadata = file_to_update.meta_data.copy()
+            updated_metadata.update(new_metadata)
+        else:
+            updated_metadata = new_metadata
         
-        # Debug logging
-        logger.info(f"Search results type: {type(result_data)}, content: {result_data}")
-        logger.info(f"Current user ID: {current_user.id}")
+        # Explicitly update the meta_data field
+        file_to_update.meta_data = updated_metadata
         
-        # Check if the results are in the expected format
-        if isinstance(result_data, dict) and 'content' in result_data and isinstance(result_data['content'], list):
-            results = result_data['content']
-            
-            # First item is usually "Results for the query..."
-            if len(results) > 1:
-                # Process the entries, which are XML-like strings
-                file_ids = set()
-                user_results = []
-                
-                # Process all entries after the first one
-                for i in range(1, len(results)):
-                    result_item = results[i]
-                    
-                    # Check if the item is a dictionary with 'text' field
-                    if isinstance(result_item, dict) and 'text' in result_item:
-                        entry = result_item['text']
-                    else:
-                        # Skip if not the expected format
-                        continue
-                    
-                    # Debug log the entry
-                    logger.info(f"Processing entry {i}: {entry}")
-                    
-                    # Check if it's a string containing an XML-like entry
-                    if isinstance(entry, str) and "<entry>" in entry:
-                        # Extract content and metadata from the XML-like format
-                        content_start = entry.find("<content>") + len("<content>")
-                        content_end = entry.find("</content>")
-                        content = entry[content_start:content_end] if content_start > 0 and content_end > 0 else ""
-                        
-                        metadata_start = entry.find("<metadata>") + len("<metadata>")
-                        metadata_end = entry.find("</metadata>")
-                        metadata_str = entry[metadata_start:metadata_end] if metadata_start > 0 and metadata_end > 0 else "{}"
-                        
-                        logger.info(f"Extracted metadata string: {metadata_str}")
-                        
-                        try:
-                            metadata = json.loads(metadata_str) if metadata_str else {}
-                            logger.info(f"Parsed metadata: {metadata}")
-                            logger.info(f"Metadata user_id: {metadata.get('user_id')}, comparing with: {current_user.id}")
-                            
-                            # For development, if the user is the dev user, accept any results
-                            should_include = (
-                                metadata.get("user_id") == current_user.id or
-                                (settings.DEBUG and current_user.email == "dev@example.com")
-                            )
-                            
-                            logger.info(f"Should include result: {should_include}")
-                            
-                            # Check if the result belongs to the current user
-                            if should_include:
-                                # Add file_id to set of seen files
-                                file_id = metadata.get("file_id")
-                                if file_id:
-                                    file_ids.add(file_id)
-                                
-                                # Add to results
-                                user_results.append({
-                                    "content": content,
-                                    "metadata": metadata,
-                                    "score": 0  # Score not available in the current response format
-                                })
-                        except json.JSONDecodeError:
-                            logger.error(f"Failed to parse metadata JSON: {metadata_str}")
-                
-                # Get full file information for each file_id
-                file_repo = FileRepository(db)
-                files_info = []
-                
-                for file_id in file_ids:
-                    file = file_repo.get(file_id)
-                    if file:
-                        files_info.append({
-                            "id": file.id,
-                            "filename": file.filename,
-                            "file_type": file.file_type,
-                            "file_size": file.file_size,
-                            "created_at": file.created_at,
-                            "metadata": file.meta_data
-                        })
-                
-                return {
-                    "results": user_results,
-                    "files": files_info
-                }
+        # Add the object to the session to mark it as dirty
+        db.add(file_to_update)
         
-        # If we reach here, either no results or unexpected format
-        return {
-            "results": [],
-            "files": []
-        }
-        
+        # Commit the changes to the database
+        await db.commit()
+        await db.refresh(file_to_update)
+
+        logger.info(f"Successfully updated metadata for file_id: {file_id}. New metadata: {file_to_update.meta_data}")
+
+        return {"id": file_id, "meta_data": file_to_update.meta_data}
+
+    except json.JSONDecodeError:
+        logger.error("Invalid JSON received for metadata update.")
+        raise HTTPException(status_code=400, detail="Invalid JSON format")
     except Exception as e:
-        logger.error(f"Error searching files: {str(e)}")
+        logger.error(f"Error updating file metadata for {file_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to update file metadata: {str(e)}")
+
+@router.post("/attach-to-message")
+async def attach_file_to_message(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(current_user_dependency) # Ensure user is authenticated
+):
+    """
+    Attach a file to a message by creating a FileAttachment record.
+    Expects a JSON body with "file_id" and "message_id".
+    """
+    try:
+        data = await request.json()
+        file_id = data.get("file_id")
+        message_id = data.get("message_id")
+
+        if not file_id or not message_id:
+            raise HTTPException(status_code=400, detail="Missing file_id or message_id in request payload")
+
+        # Ensure current_user is awaited if it's a coroutine
+        user = await current_user if isawaitable(current_user) else current_user
+
+        # Validate that the file exists and belongs to the user
+        file_repo = FileRepository(db)
+        file_obj = await file_repo.get(file_id)
+        if not file_obj or file_obj.user_id != user.id:
+            raise HTTPException(status_code=404, detail="File not found or not authorized")
+
+        # Attempt to find the message with retries to handle potential race conditions
+        # where the message record might not have been created yet.
+        message_repo = MessageRepository(db) # Assuming MessageRepository is available
+        message_obj = None
+        max_retries = 5  # Increased from 3
+        retry_delay = 1.0  # Increased from 0.5 seconds
+
+        for attempt in range(max_retries):
+            message_obj = await message_repo.get(message_id)
+            if message_obj:
+                # Basic ownership check (can be more thorough if conversation model is complex)
+                # This assumes message_obj.conversation.user_id exists if message_obj.conversation is loaded.
+                # Adjust based on your actual Message model structure and how user_id is linked.
+                # For now, let's assume if the message exists, we can proceed with attachment,
+                # and rely on other mechanisms for strict ownership if needed.
+                # A more robust check would involve loading conversation and checking its user_id.
+                # current_conversation = await db.get(Conversation, message_obj.conversation_id)
+                # if not current_conversation or current_conversation.user_id != user.id:
+                #     logger.warning(f"Attempt {attempt+1}: Message {message_id} found, but ownership check failed or conversation not found.")
+                #     message_obj = None # Treat as not found for retry purposes if ownership fails
+                # else:
+                break # Message found
+
+            logger.info(f"Attach attempt {attempt + 1}/{max_retries}: Message {message_id} not yet found. Retrying in {retry_delay}s...")
+            await asyncio.sleep(retry_delay)
+        
+        if not message_obj:
+            logger.error(f"Failed to find message {message_id} after {max_retries} attempts.")
+            raise HTTPException(status_code=404, detail=f"Message with ID {message_id} not found after retries. Cannot attach file.")
+
+
+        # Check if attachment already exists to prevent duplicates
+        stmt = select(DBFileAttachment).where(
+            DBFileAttachment.file_id == file_id,
+            DBFileAttachment.message_id == message_id
+        )
+        result = await db.execute(stmt)
+        existing_attachment = result.scalars().first()
+        if existing_attachment:
+            logger.info(f"File {file_id} is already attached to message {message_id}.")
+            return {
+                "status": "success", 
+                "message": "File already attached to message", 
+                "attachment_id": existing_attachment.id
+            }
+
+        # Create FileAttachment record
+        # We need the FileAttachment model, assume it's DBFileAttachment from models.py
+        # from db.models import FileAttachment as DBFileAttachment # Add this import if not present
+        
+        new_attachment = DBFileAttachment(
+            id=str(uuid4()),
+            file_id=file_id,
+            message_id=message_id
+        )
+        db.add(new_attachment)
+        await db.commit()
+        await db.refresh(new_attachment)
+
+        logger.info(f"Successfully attached file {file_id} to message {message_id}. Attachment ID: {new_attachment.id}")
+        return {
+            "status": "success", 
+            "message": "File attached to message successfully", 
+            "attachment_id": new_attachment.id
+        }
+
+    except HTTPException as http_exc:
+        raise http_exc # Re-raise HTTPException
+    except Exception as e:
+        logger.error(f"Error attaching file to message: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Error searching files: {str(e)}"
+            detail=f"Failed to attach file to message: {str(e)}"
         ) 

@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { Box, useTheme, Snackbar, Alert, useMediaQuery, Button, AlertColor } from '@mui/material';
 import ReplayIcon from '@mui/icons-material/Replay';
 import { v4 as uuidv4 } from 'uuid';
+import { getUserInfoCached } from '../utils/user-info-cache';
+import { getCachedAccessToken } from '../utils/token-cache';
 
 // Components
 import NavBarNew from '../components/MainWindow/NavBarNew';
@@ -20,7 +22,22 @@ import { FileAttachment } from '../hooks/conversation/types';
 import useRealTimeUpdates from '../hooks/conversation/useRealTimeUpdates';
 
 // Import MCPAgentClient with TypeScript support now available
-import MCPAgentClient from '../utils/mcp-agent-client';
+import MCPAgentClient from '../utils/mcp-agent-client'; // Use import for ES modules
+
+// --- TYPE DEFINITIONS (Local to this file for now) ---
+interface ElectronAPI { // Local definition for this file
+  getAccessToken?: () => Promise<string | null>;
+  getUserInfo?: () => Promise<{ sub?: string; id?: string; email?: string; [key: string]: any } | null>;
+  getEnvVars?: () => Record<string, string>;
+  [key: string]: any;
+}
+
+interface MCPAgentClientType {
+  login: (userId: string, token: string) => Promise<boolean>;
+  processRequest: (requestData: any, options?: any) => Promise<any>;
+  [key: string]: any;
+}
+// --- END TYPE DEFINITIONS ---
 
 // --- ADDED: Local definitions for MCP Callback types --- 
 interface MCPProgressData {
@@ -82,6 +99,9 @@ const MainWindowNew: React.FC = () => {
   const [mcpAgentClient, setMcpAgentClient] = useState<any>(null);
   const [progressUpdates, setProgressUpdates] = useState<Record<string, string>>({});
   const [activeAgents, setActiveAgents] = useState<Record<string, boolean>>({});
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  
+  // User info caching is now handled by the global cache utility
   
   // Get database utilities for message persistence
   const { saveMessageToDatabase } = useMessageDatabaseUtils();
@@ -104,6 +124,69 @@ const MainWindowNew: React.FC = () => {
     connectToWebSocket,
     cleanupQueryResources
   } = realTimeUpdates;
+
+  // Create stable callback refs to avoid dependency issues
+  const handleAgentProgressRef = useRef<(update: MCPProgressData) => void>();
+  const handleAgentCompletedRef = useRef<(response: MCPCompletionData) => void>();  
+  const handleAgentErrorRef = useRef<(error: { message: string }) => void>();
+
+  // Define the actual callback functions that can access current state
+  handleAgentProgressRef.current = (update: MCPProgressData) => {
+    console.log('MCP Agent progress update:', update);
+    const agentName = update.agent || 'UnknownAgent';
+    setProgressUpdates(prev => ({ ...prev, [agentName]: update.message || '' }));
+    setActiveAgents(prev => ({ ...prev, [agentName]: true }));
+  };
+
+  handleAgentCompletedRef.current = (response: MCPCompletionData) => {
+    console.log('MCP Agent completed:', response);
+    const resultText = response.result || '';
+    const currentConvId = conversation.currentConversationId;
+    if (currentConvId) {
+      conversation.addMessage(currentConvId, {
+        id: `agent-${Date.now()}`,
+        content: resultText,
+        role: 'assistant',
+        timestamp: new Date(),
+      });
+    }
+    setProgressUpdates({});
+    setActiveAgents({});
+  };
+
+  handleAgentErrorRef.current = (error: { message: string }) => {
+    console.error('MCP Agent error:', error);
+    
+    const currentConvId = conversation.currentConversationId;
+    if (currentConvId) {
+      conversation.addMessage(currentConvId, {
+        id: `error-${Date.now()}`,
+        content: `Error: ${error.message}`,
+        role: 'assistant' as const,
+        timestamp: new Date(),
+      });
+    }
+    
+    setProgressUpdates({});
+    setActiveAgents({});
+    
+    setAlertMessage(`Agent error: ${error.message}`);
+    setAlertSeverity('error');
+    setAlertOpen(true);
+  };
+
+  // Stable wrapper functions that never change
+  const handleAgentProgress = useCallback((update: MCPProgressData) => {
+    handleAgentProgressRef.current?.(update);
+  }, []);
+
+  const handleAgentCompleted = useCallback((response: MCPCompletionData) => {
+    handleAgentCompletedRef.current?.(response);
+  }, []);
+
+  const handleAgentError = useCallback((error: { message: string }) => {
+    handleAgentErrorRef.current?.(error);
+  }, []);
 
   // Toggle side menu
   const toggleSideMenu = useCallback(() => {
@@ -147,35 +230,8 @@ const MainWindowNew: React.FC = () => {
   // Create electron API wrapper
   const electronAPI = getElectronAPI();
   
-  // Initialize conversation when component mounts
-  useEffect(() => {
-    const initialize = async () => {
-      if (conversation.isLoading) return;
-      
-      try {
-        console.log('Initializing conversations...');
-        
-        // Get existing conversations (or create a new one if none exist)
-        const existingConversations = await conversation.loadConversations();
-        
-        if (!existingConversations || existingConversations.length === 0) {
-          // Create a new conversation if none exists
-          console.log('No existing conversations, creating a new one');
-          const newConversationId = await conversation.createConversation('New Conversation');
-          conversation.setCurrentConversationId(newConversationId);
-        }
-      } catch (err) {
-        console.error('Failed to initialize:', err);
-        setAlertMessage('Failed to initialize conversations');
-        setAlertSeverity('error');
-        setAlertOpen(true);
-      }
-    };
-    
-    if (import.meta.env.DEV) {
-      initialize();
-    }
-  }, [conversation]);
+  // NOTE: Conversation initialization is now handled by useConversationList hook
+  // which has proper Zustand persistence and prevents race conditions
   
   // Handle selected option from subwindow (Electron specific)
   useEffect(() => {
@@ -330,98 +386,86 @@ const MainWindowNew: React.FC = () => {
     }
   }, [network.isOffline, alertOpen]);
   
-  // MCPAgent handlers
-  const handleAgentProgress = useCallback((update: MCPProgressData) => {
-    console.log('MCP Agent progress update:', update);
-    const agentName = update.agent || 'UnknownAgent'; // Handle potentially undefined agent
-    setProgressUpdates(prev => ({ ...prev, [agentName]: update.message || '' }));
-    setActiveAgents(prev => ({ ...prev, [agentName]: true }));
-  }, []);
-  
-  const handleAgentCompleted = useCallback((response: MCPCompletionData) => {
-    console.log('MCP Agent completed:', response);
-    const resultText = response.result || ''; // Handle potentially undefined result
-    if (conversation.currentConversationId) {
-      conversation.addMessage(conversation.currentConversationId, {
-        id: `agent-${Date.now()}`,
-        content: resultText,
-        role: 'assistant',
-        timestamp: new Date(),
-      });
-    }
-    setProgressUpdates({});
-    setActiveAgents({});
-  }, [conversation.currentConversationId, conversation.addMessage]);
-  
-  const handleAgentError = useCallback((error: { message: string }) => {
-    console.error('MCP Agent error:', error);
-    
-    if (conversation.currentConversationId) {
-      // Add error message as system message
-      conversation.addMessage(conversation.currentConversationId, {
-        id: `error-${Date.now()}`,
-        content: `Error: ${error.message}`,
-        role: 'assistant' as const,
-        timestamp: new Date(),
-      });
-    }
-    
-    // Clear progress updates and active agents
-    setProgressUpdates({});
-    setActiveAgents({});
-    
-    // Loading state is now managed by useRealTimeUpdates
-    
-    // Show error alert
-    setAlertMessage(`Agent error: ${error.message}`);
-    setAlertSeverity('error');
-    setAlertOpen(true);
-  }, [
-    conversation.currentConversationId, 
-    conversation.addMessage, 
-    setAlertMessage, // Keep stable setters
-    setAlertSeverity, 
-    setAlertOpen
-  ]); // Use stable dependencies
-  
   // Initialize MCP Agent client
   useEffect(() => {
-    const initializeAgentClient = () => {
-      try {
-        console.log('Initializing MCP Agent client...');
+    const initializeAgentClient = async () => {
+       if (mcpAgentClient) {
+         console.log('[MainWindowNew] MCPAgentClient already initialized, skipping.');
+         return;
+       }
+
+       console.log('[MainWindowNew] Attempting to initialize MCPAgentClient...');
+       
+       try {
+         // Lazy import to avoid issues if the module isn't available
+         const MCPAgentClientModule = await import('../utils/mcp-agent-client');
+         const MCPAgentClient = MCPAgentClientModule.default;
+         
+         const newClient = new MCPAgentClient() as any;
         
-        // Pass the handlers to the client
-        const client = new MCPAgentClient({
-          onProgress: handleAgentProgress, 
-          onCompleted: handleAgentCompleted, 
-          onError: (error: MCPErrorData) => {
-            console.warn('MCP Agent error:', error);
+        const electron = (window as any).electron;
+        if (electron && typeof electron.getAccessToken === 'function' && typeof electron.getUserInfo === 'function') {
+          console.log('[MainWindowNew] Attempting Electron login for MCPAgentClient...');
+          try {
+            const token = await getCachedAccessToken(); // Use cached token system
             
-            // Handle connection errors with appropriate messages
-            const isConnectionError = error.message?.includes('not available') || 
-                                     error.message?.includes('connection');
-                                     
-            if (isConnectionError) {
-              setAlertMessage('MCP Agent server is not available. Using standard API processing instead.');
-              setAlertSeverity('warning');
-              setAlertOpen(true);
+            // Use cached user info to prevent repeated Auth0 calls
+            const userInfo = await getUserInfoCached();
+            
+            // Prioritize 'sub', then 'id', then 'email' as a last resort for effectiveUserId
+            const effectiveUserId = userInfo?.sub || userInfo?.id || userInfo?.email;
+
+            console.log('[MainWindowNew] Raw userInfo for MCPAgentClient login:', userInfo);
+            console.log(`[MainWindowNew] Determined effectiveUserId for MCPAgentClient: ${effectiveUserId}`);
+
+            if (token && userInfo && effectiveUserId) {
+              setCurrentUserId(effectiveUserId);
+              console.log('[MainWindowNew] Authenticating MCP Agent...');
+              const loginSuccess = await newClient.login(effectiveUserId, token);
+              console.log(`[MainWindowNew] MCPAgentClient Electron login with userId '${effectiveUserId}' success: ${loginSuccess}`);
+              if (!loginSuccess) {
+                // Only show alert if this is not during app initialization
+                console.warn('MCP Agent authentication failed, but continuing with limited functionality');
+                // Don't show alert immediately - wait to see if it's just a startup timing issue
+                setTimeout(() => {
+                  if (!newClient.isLoggedIn) {
+                    setAlertMessage('MCP Agent service is initializing. Some features may be temporarily limited.');
+                    setAlertSeverity('info');
+                    setAlertOpen(true);
+                  }
+                }, 3000); // Wait 3 seconds before showing message
+              } else {
+                console.log('[MainWindowNew] MCP Agent authentication successful');
+              }
             } else {
-              // For other errors, use the normal error handler
-              handleAgentError({ message: error.message || 'Unknown MCP Agent Error' } as { message: string });
+              console.warn('[MainWindowNew] MCPAgentClient Electron login: Missing token, user info, or usable user ID (id/email).');
+              // Fallback to dev login if in DEV mode
+              if (import.meta.env.DEV) {
+                console.log('[MainWindowNew] MCPAgentClient attempting dev mode login as fallback.');
+                await newClient._devModeLogin(); 
+              }
             }
-          },
-        });
+          } catch (loginError: any) {
+            console.error('[MainWindowNew] MCPAgentClient Electron login error:', loginError);
+            // Don't show alert for authentication errors during startup - they often resolve themselves
+            console.log('MCP Agent authentication will retry automatically');
+          }
+        } else if (import.meta.env.DEV) {
+          // In dev mode (not Electron), the client constructor already called _devModeLogin()
+          console.log('[MainWindowNew] MCPAgentClient running in DEV mode (not Electron), constructor handled dev login.');
+        }
         
-        setMcpAgentClient(client);
-        console.log('MCP Agent client initialized');
+        setMcpAgentClient(newClient);
+        console.log('MCP Agent client fully initialized and configured.');
         
-        // Log how query IDs will be generated
-        console.log('MCP Agent will use query IDs in format: query-{uuid} to ensure consistency with backend');
       } catch (error) {
         console.error('Failed to initialize MCP Agent client:', error);
-        setAlertMessage('Failed to initialize MCP Agent. Using standard API processing instead.');
-        setAlertSeverity('warning');
-        setAlertOpen(true);
+        // Only show initialization errors after a delay to avoid startup noise
+        setTimeout(() => {
+          setAlertMessage('MCP Agent service is starting up. Some features may be temporarily unavailable.');
+          setAlertSeverity('info');
+          setAlertOpen(true);
+        }, 5000); // Wait 5 seconds before showing initialization error
       }
     };
     
@@ -440,7 +484,7 @@ const MainWindowNew: React.FC = () => {
         }
       }
     };
-  }, [handleAgentProgress, handleAgentCompleted, handleAgentError]);
+  }, []); // Remove all dependencies to prevent re-initialization on state changes
   
   // Helper function to handle fallback to standard API
   const fallbackToStandardApi = useCallback(async (text: string, conversationId: string, attachments: any[] = []) => {
@@ -489,12 +533,12 @@ const MainWindowNew: React.FC = () => {
   }, [conversation]);
   
   // Handle sending a message
-  const handleSendMessage = useCallback(async (content: string, files?: File[]) => {
-    console.log('[MainWindowNew] handleSendMessage ENTERED', { content: content?.substring(0,50), fileCount: files?.length });
+  const handleSendMessage = useCallback(async (content: string, files?: File[], mode?: 'multiagent' | 'single', singleAgentType?: string) => {
+    console.log('[MainWindowNew] handleSendMessage ENTERED', { content: content?.substring(0,50), fileCount: files?.length, mode, singleAgentType });
     if (!content.trim() && (!files || files.length === 0)) return;
     if (conversation.isLoading) return;
     
-    console.log('[MainWindowNew] handleSendMessage called with:', { content, files });
+    console.log('[MainWindowNew] handleSendMessage called with:', { content, files, mode, singleAgentType });
     
     let targetConversationId = conversation.currentConversationId;
     if (!targetConversationId) {
@@ -547,13 +591,17 @@ const MainWindowNew: React.FC = () => {
       };
       await conversation.addMessage(targetConversationId, userMessage);
     if (targetConversationId) {
-      await saveMessageToDatabase(targetConversationId, userMessage.content, 'user', { files: [] });
+      await saveMessageToDatabase(targetConversationId, userMessage.id, userMessage.content, 'user', { file_ids: [] });
     }
 
     if (files && files.length > 0) {
       console.log(`[MainWindowNew] Uploading ${files.length} files for message ${userMessageId} with queryId ${queryId}`);
       const uploadPromises = files.map((file, index) => 
-        api.uploadFile(file, { query_id: queryId, message_id: userMessageId })
+        api.uploadFile(file, { 
+          query_id: queryId, 
+          message_id: userMessageId,
+          user_id: currentUserId
+        })
           .then((uploadResponse: { id: string, url?: string }) => {
             const realFileId = uploadResponse.id;
             console.log(`[MainWindowNew] Upload success for ${file.name}: ${realFileId}`);
@@ -607,21 +655,22 @@ const MainWindowNew: React.FC = () => {
           setAlertSeverity('error');
           setAlertOpen(true);
           if (targetConversationId) {
-              await saveMessageToDatabase(targetConversationId, userMessage.content, 'user', { 
-                  file_ids: finalFileIds, 
-                  uploadError: true
-              });
+              await saveMessageToDatabase(targetConversationId, userMessage.id, userMessage.content, 'user', { file_ids: finalFileIds, uploadError: true });
           }
           return;
       }
       
       if (targetConversationId) {
-          await saveMessageToDatabase(targetConversationId, userMessage.content, 'user', { 
-              file_ids: finalFileIds
-          });
+          await saveMessageToDatabase(targetConversationId, userMessage.id, userMessage.content, 'user', { file_ids: finalFileIds });
       }
 
       fileAttachments = finalUiAttachments; 
+
+      // Refresh the file list after successful uploads
+      if (finalFileIds.length > 0 && !uploadErrorOccurred) {
+        console.log('[MainWindowNew] Uploads successful, refreshing file list.');
+        file.loadFiles(); // Corrected to use file.loadFiles()
+      }
     }
 
     try { 
@@ -678,6 +727,8 @@ const MainWindowNew: React.FC = () => {
             query_id: queryId, 
             attachments: processedAttachments,
             conversation_id: targetConversationId,
+            mode: mode || 'multiagent',
+            single_agent_type: mode === 'single' ? singleAgentType : undefined,
           });
           
           // --- ADDED: Connect WebSocket AFTER initiating the request --- 
@@ -732,7 +783,7 @@ const MainWindowNew: React.FC = () => {
           }
         }
     }
-  }, [conversation, mcpAgentClient, activeQueryId, realTimeUpdates, saveMessageToDatabase, fallbackToStandardApi, isWaitingForClarification]);
+  }, [conversation, mcpAgentClient, activeQueryId, realTimeUpdates, saveMessageToDatabase, fallbackToStandardApi, isWaitingForClarification, currentUserId]);
   
   // Reset network status (useful when recovering from errors)
   const handleResetNetwork = useCallback(() => {
@@ -753,7 +804,7 @@ const MainWindowNew: React.FC = () => {
     setAlertOpen(false);
   };
   
-  // Get conversation messages for chat area
+  // Get conversation messages for chat area - prevent flashing by maintaining previous messages during loading
   const messages = useMemo(() => {
     if (!conversation.currentConversationId) return [];
     
@@ -761,17 +812,24 @@ const MainWindowNew: React.FC = () => {
       (c: any) => c.id === conversation.currentConversationId
     );
     
+    // If no current conversation data exists, return empty array (initial state)
     if (!currentConversation || !conversation.currentConversation) return [];
+    
+    // Safety check: ensure messages array exists
+    const messagesArray = conversation.currentConversation.messages || [];
+    const hasMessages = messagesArray.length > 0;
     
     console.log('📄 Current messages for rendering:', {
       conversationId: conversation.currentConversationId,
-      messageCount: conversation.currentConversation.messages.length,
-      messageRoles: conversation.currentConversation.messages.map((m: any) => m.role),
-      messageIds: conversation.currentConversation.messages.map((m: any) => m.id.substring(0, 8))
+      messageCount: messagesArray.length,
+      hasMessages,
+      isLoading: conversation.isLoading,
+      messageRoles: messagesArray.map((m: any) => m.role),
+      messageIds: messagesArray.map((m: any) => m.id.substring(0, 8))
     });
     
-    return conversation.currentConversation.messages;
-  }, [conversation.currentConversationId, conversation.currentConversation, conversation.conversationList]);
+    return messagesArray;
+  }, [conversation.currentConversationId, conversation.currentConversation, conversation.conversationList, conversation.isLoading]);
   
   // --- ADDED: Log messages being passed to ChatArea ---
   useEffect(() => {
@@ -812,23 +870,23 @@ const MainWindowNew: React.FC = () => {
   }, [conversation.currentConversationId, conversation.currentConversation]);
   
   // --- ADDED: Stop Processing Handler --- 
-  const handleStopProcessing = useCallback(() => {
+  const handleStopProcessing = useCallback(async () => {
     const queryIdToStop = realTimeUpdates.activeQueryId;
     console.log(`[MainWindowNew] Requesting stop for query: ${queryIdToStop}`);
     if (queryIdToStop) {
-        // TODO: Implement backend API call or MCP Agent call to stop the query
-        // Example: 
-        // if (mcpAgentClient) { 
-        //    mcpAgentClient.stopRequest(queryIdToStop);
-        // } else { 
-        //    api.stopQuery(queryIdToStop).catch(err => console.error("Stop API call failed:", err));
-        // }
-        console.warn("[MainWindowNew] Backend stop mechanism not implemented yet.");
+        try {
+          // Call the cancel API endpoint
+          console.log(`[MainWindowNew] Calling API to cancel query: ${queryIdToStop}`);
+          const result = await api.cancelQuery(queryIdToStop);
+          console.log(`[MainWindowNew] Successfully cancelled query:`, result);
+        } catch (error) {
+          console.error(`[MainWindowNew] Error calling cancel API:`, error);
+        }
 
-        // Immediately clean up frontend resources
+        // Immediately clean up frontend resources regardless of API result
         realTimeUpdates.cleanupQueryResources(queryIdToStop);
     }
-  }, [realTimeUpdates.activeQueryId, realTimeUpdates.cleanupQueryResources]);
+  }, [realTimeUpdates.activeQueryId, realTimeUpdates.cleanupQueryResources, api]);
   // --- END ADDED ---
   
   // --- ADDED: Function to create a new conversation ---
@@ -852,7 +910,7 @@ const MainWindowNew: React.FC = () => {
   // --- END ADDED ---
   
   // Render loading state if not initialized or authenticating
-  if (conversation.isLoading && !import.meta.env.DEV) {
+  if (conversation.isLoading) {
     return (
       <Box
         display="flex"
@@ -966,11 +1024,13 @@ const MainWindowNew: React.FC = () => {
           
           <AgentStatusIndicator />
           
-          <InputBoxNew 
-            onSendMessage={handleSendMessage} 
-            isLoading={isAnyQueryProcessing}
-            onStopProcessing={handleStopProcessing}
-          />
+          <Box sx={{ px: 1, pb: 0.5, pt: 0 }}>
+            <InputBoxNew 
+              onSendMessage={handleSendMessage} 
+              isLoading={isAnyQueryProcessing}
+              onStopProcessing={handleStopProcessing}
+            />
+          </Box>
       
   <Snackbar 
     open={alertOpen} 

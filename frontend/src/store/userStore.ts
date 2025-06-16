@@ -4,8 +4,8 @@ import { persist, createJSONStorage } from 'zustand/middleware';
 export interface UserSettings {
   theme: 'light' | 'dark' | 'system';
   fontSize: 'small' | 'medium' | 'large';
-  notifications: boolean;
-  autoSave: boolean;
+  language: string;
+  accessibleFolders: string[];
   [key: string]: any;
 }
 
@@ -40,8 +40,8 @@ interface UserState {
 const defaultSettings: UserSettings = {
   theme: 'dark',
   fontSize: 'medium',
-  notifications: true,
-  autoSave: true,
+  language: 'en',
+  accessibleFolders: [],
 };
 
 // Helper to safely serialize/deserialize data with version tracking

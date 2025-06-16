@@ -21,6 +21,7 @@ export interface IntentionRequest {
   query_id: string;
   text: string | null;
   screenshot: string | null;
+  screenshot_mime_type?: string;
   mode: 'text' | 'screenshot' | 'both' | 'error';
 }
 

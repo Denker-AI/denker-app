@@ -42,6 +42,17 @@ const activeWebSockets: Record<string, WebSocket> = {};
 // Track websocket status to avoid reconnecting finished queries
 const queryStatusMap: Record<string, AgentStepType | 'idle'> = {};
 
+// Utility to get the local MCP agent WebSocket base URL
+const getLocalWsBaseUrl = () => {
+  // If running in Electron, try to get from env vars
+  if (typeof window !== 'undefined' && window.electron && window.electron.getEnvVars) {
+    const envVars = window.electron.getEnvVars();
+    return envVars.VITE_LOCAL_WS_URL || 'ws://localhost:9001';
+  }
+  // Otherwise, use Vite env or fallback
+  return import.meta.env.VITE_LOCAL_WS_URL || 'ws://localhost:9001';
+};
+
 /**
  * WebSocket hook for connecting to MCP Agent WebSocket
  * This follows MCP Agent's patterns for real-time updates
@@ -183,13 +194,9 @@ export const useAgentWebSocket = (queryId: string, conversationId?: string) => {
 
         // Create WebSocket connection URL
         let wsBaseUrl;
-        if (import.meta.env.DEV) {
-          wsBaseUrl = 'ws://localhost:8001';
-        } else {
-          // IMPORTANT: Replace this with your actual production WebSocket URL
-          wsBaseUrl = import.meta.env.VITE_WS_URL_PROD || 'wss://your-prod-ws.denker.ai';
-        }
-        console.log('[WebSocket] Determined wsBaseUrl:', wsBaseUrl, '(Dev mode:', import.meta.env.DEV+')');
+        // Always use the local backend for MCP agent WebSocket
+        wsBaseUrl = getLocalWsBaseUrl();
+        console.log('[WebSocket] Determined wsBaseUrl (MCP agent local):', wsBaseUrl);
 
         let endpoint = `/api/v1/agents/ws/mcp-agent/${queryId}`;
         if (conversationId) {

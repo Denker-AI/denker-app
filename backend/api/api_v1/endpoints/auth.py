@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
+from inspect import isawaitable
 
 from db.database import get_db
 from db.repositories import UserRepository
@@ -12,7 +13,7 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 @router.post("/login")
-async def login(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+async def login(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):
     """
     Verify Auth0 token and create or update user in database
     """
@@ -25,11 +26,11 @@ async def login(token: str = Depends(oauth2_scheme), db: Session = Depends(get_d
         
         # Check if user exists in database
         user_repo = UserRepository(db)
-        user = user_repo.get_by_email(user_data["email"])
+        user = await user_repo.get_by_email(user_data["email"])
         
         if not user:
             # Create new user
-            user = user_repo.create({
+            user = await user_repo.create({
                 "id": user_data["sub"],
                 "email": user_data["email"],
                 "name": user_data.get("name", ""),

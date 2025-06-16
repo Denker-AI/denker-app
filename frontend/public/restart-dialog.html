@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-A">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Restart Confirmation</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+            user-select: none;
+        }
+        .content {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        h4 {
+            margin-top: 0;
+            color: #ffffff;
+            font-size: 16px;
+        }
+        p {
+            font-size: 13px;
+            line-height: 1.6;
+            margin-bottom: 8px;
+        }
+        .message {
+            margin-bottom: 15px;
+        }
+        .detail {
+            font-size: 12px;
+            color: #a0a0a0;
+            margin-bottom: 20px;
+        }
+        .buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        button {
+            padding: 8px 15px;
+            border: 1px solid #555;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: background-color 0.2s, color 0.2s;
+        }
+        button#restartNowBtn {
+            background-color: #007acc;
+            color: white;
+            border-color: #007acc;
+        }
+        button#restartNowBtn:hover {
+            background-color: #005fa3;
+        }
+        button#laterBtn {
+            background-color: #4a4a4a;
+            color: #d4d4d4;
+        }
+        button#laterBtn:hover {
+            background-color: #5a5a5a;
+        }
+    </style>
+</head>
+<body>
+    <div class="content">
+        <h4 id="dialogTitle">Restart Required</h4>
+        <p id="dialogMessage" class="message">Application settings have changed.</p>
+        <p id="dialogDetail" class="detail">A restart is recommended for all changes to take effect.</p>
+    </div>
+    <div class="buttons">
+        <button id="laterBtn">Later</button>
+        <button id="restartNowBtn">Restart Now</button>
+    </div>
+
+    <script>
+        // This script will be populated by preload-dialog.js exposure
+        document.addEventListener('DOMContentLoaded', () => {
+            const options = window.electronDialog?.getDialogOptions();
+            if (options) {
+                if (options.title) document.getElementById('dialogTitle').innerText = options.title;
+                if (options.message) document.getElementById('dialogMessage').innerText = options.message;
+                if (options.detail) document.getElementById('dialogDetail').innerText = options.detail;
+            }
+
+            document.getElementById('restartNowBtn').addEventListener('click', () => {
+                window.electronDialog?.sendResponse('restart');
+            });
+
+            document.getElementById('laterBtn').addEventListener('click', () => {
+                window.electronDialog?.sendResponse('later');
+            });
+        });
+    </script>
+</body>
+</html> 

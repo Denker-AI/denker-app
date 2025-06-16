@@ -7,6 +7,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 let captureDataQueue = [];
 let waitingResolvers = [];
 
+// Cache for environment variables to prevent multiple IPC calls
+let cachedEnvVars = null;
+
 // Listen for capture data from main process
 ipcRenderer.on('capture-data', (event, data) => {
   console.log('preload: received capture-data event:', {
@@ -59,13 +62,18 @@ contextBridge.exposeInMainWorld(
     getEnvVars: async () => {
       console.log('[preload.js] Requesting ENV_VARS from main process...');
       try {
+        if (cachedEnvVars) {
+          console.log('[preload.js] Returning cached ENV_VARS');
+          return cachedEnvVars;
+        }
         const envVars = await ipcRenderer.invoke('get-renderer-env-vars');
         console.log('[preload.js] Received ENV_VARS from main:', envVars ? {
             VITE_WS_URL: envVars.VITE_WS_URL,
             VITE_API_URL: envVars.VITE_API_URL,
             VITE_NODE_ENV: envVars.VITE_NODE_ENV
         } : 'undefined');
-        return envVars || {};
+        cachedEnvVars = envVars || {};
+        return cachedEnvVars;
       } catch (error) {
         console.error('[preload.js] Error invoking get-renderer-env-vars:', error);
         return {
@@ -129,6 +137,7 @@ contextBridge.exposeInMainWorld(
         
         // File system operations
         openFile: async () => ipcRenderer.invoke('dialog:openFile'),
+        openDirectoryDialog: async () => ipcRenderer.invoke('dialog:openDirectory'),
         showDenkerFolder: () => ipcRenderer.invoke('fs:showDenkerFolder'),
         downloadFile: (fileId) => ipcRenderer.invoke('fs:downloadFile', fileId),
         
@@ -177,7 +186,34 @@ contextBridge.exposeInMainWorld(
         exitApp: () => ipcRenderer.invoke('app:exit'),
 
         // Add the new function for dev mode callback processing
-        devProcessAuth0Callback: (params) => ipcRenderer.invoke('dev-process-auth0-callback', params)
+        devProcessAuth0Callback: (params) => ipcRenderer.invoke('dev-process-auth0-callback', params),
+
+        // App control
+        restartApp: () => ipcRenderer.invoke('restart-app'),
+        requestLocalBackendRestart: () => ipcRenderer.invoke('request-restart-local-backend'),
+        showRestartDialog: (options) => ipcRenderer.invoke('show-restart-dialog', options),
+
+        // Backend readiness check
+        isBackendReady: () => ipcRenderer.invoke('is-backend-ready'),
+        
+        // Backend events
+        onBackendReady: (callback) => {
+          const wrappedCallback = () => callback();
+          ipcRenderer.on('backend-ready', wrappedCallback);
+          return () => ipcRenderer.removeListener('backend-ready', wrappedCallback);
+        },
+        
+        onBackendFailed: (callback) => {
+          const wrappedCallback = (event, errorMessage) => callback(errorMessage);
+          ipcRenderer.on('backend-failed', wrappedCallback);
+          return () => ipcRenderer.removeListener('backend-failed', wrappedCallback);
+        },
+        
+        onBackendStopped: (callback) => {
+          const wrappedCallback = (event, message) => callback(message);
+          ipcRenderer.on('backend-stopped', wrappedCallback);
+          return () => ipcRenderer.removeListener('backend-stopped', wrappedCallback);
+        }
       }
     );
     console.log('✅ Preload script: Successfully exposed electron API. Timestamp:', Date.now());
@@ -231,3 +267,5 @@ contextBridge.exposeInMainWorld(
 } catch (e_outer) {
   console.error('💥💥💥 CRITICAL PRELOAD SCRIPT FAILURE (OUTER CATCH) 💥💥💥:', e_outer, 'Timestamp:', Date.now());
 }
+
+console.log('✅ Preload script (preload.js) finished executing. Timestamp:', Date.now());

@@ -373,7 +373,21 @@ async def wait_for_files(
     raise FileProcessingTimeoutError(f"Timeout ({timeout}s) waiting for file processing. Last known statuses: {current_statuses}")
 # --- END ADDED ---
 
+# --- CoordinatorAgent logic is now handled by the local backend (Electron app) ---
+# class CoordinatorAgent:
+#     ... (comment out full class)
+
 class CoordinatorAgent:
+    def __init__(self, *args, **kwargs):
+        raise NotImplementedError("CoordinatorAgent is now handled by the local backend (Electron app).")
+    async def process_query(self, *args, **kwargs):
+        raise NotImplementedError("process_query is now handled by the local backend (Electron app).")
+
+    async def setup(self):
+        """Setup and initialize agent components."""
+        try:
+            logger.info("Setting up CoordinatorAgent")
+            
     """
     Coordinator for MCP Agents using Direct Anthropic integration.
     
@@ -1477,7 +1491,7 @@ class CoordinatorAgent:
                 health_result["fetch"] = False
                 health_result["websearch"] = False
                 health_result["filesystem"] = False
-                health_result["quickchart-server"] = False
+
                 health_result["document-loader"] = False
                 health_result["markdown-editor"] = False
                 return health_result
@@ -1609,58 +1623,7 @@ class CoordinatorAgent:
                 logger.warning(f"Error checking Filesystem health: {str(e)}")
                 health_result["filesystem"] = False
                 
-            # Check if QuickChart service is available and functional
-            try:
-                if hasattr(self.mcp_app, 'servers') and 'quickchart-server' in self.mcp_app.servers:
-                    quickchart_server = self.mcp_app.servers['quickchart-server']
-                    
-                    # Create a test agent to verify tool availability
-                    test_agent = Agent(
-                        name="quickchart_health_check",
-                        instruction="Test connection to QuickChart server",
-                        server_names=["quickchart-server"]
-                    )
-                    
-                    await test_agent.initialize()
-                    tools = await test_agent.list_tools()
-                    tool_names = [tool.name for tool in tools.tools] if hasattr(tools, 'tools') else []
-                    
-                    # Check for specific chart generation tool
-                    chart_tool = next((t for t in tool_names if "generate_chart" in t.lower()), None)
-                    
-                    if chart_tool:
-                        try:
-                            # Test the tool with minimal parameters
-                            test_result = await test_agent.call_tool(chart_tool, {
-                                "type": "bar",
-                                "datasets": [{
-                                    "data": [1, 2, 3]
-                                }]
-                            })
-                            
-                            # If we get a URL back, the service is working
-                            is_working = not test_result.isError and any(
-                                "quickchart.io/chart" in str(content.text) 
-                                for content in test_result.content 
-                                if hasattr(content, 'text')
-                            )
-                            
-                            health_result["quickchart-server"] = is_working
-                            logger.info(f"QuickChart tool test result: {is_working}")
-                        except Exception as tool_error:
-                            logger.warning(f"Error testing QuickChart tool: {str(tool_error)}")
-                            health_result["quickchart-server"] = False
-                    else:
-                        # Fallback to just checking if the tool exists
-                        has_chart = any("chart" in tool.lower() for tool in tool_names)
-                        health_result["quickchart-server"] = has_chart
-                        logger.info(f"QuickChart health check: has_chart={has_chart}")
-                else:
-                    health_result["quickchart-server"] = False
-                    logger.warning("QuickChart server not found in MCP servers")
-            except Exception as e:
-                logger.warning(f"Error checking QuickChart health: {str(e)}")
-                health_result["quickchart-server"] = False
+
                 
             # Check if Document Loader service is available and functional
             try:

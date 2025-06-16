@@ -27,6 +27,9 @@ const Login: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
   
+  // Track if this is initial loading vs actual login loading
+  const [initialLoad, setInitialLoad] = React.useState(true);
+  
   // Redirect if already authenticated
   useEffect(() => {
     if (!isLoading && isAuthenticated) {
@@ -34,6 +37,15 @@ const Login: React.FC = () => {
       navigate('/'); // Navigate to the main app route
     }
   }, [isLoading, isAuthenticated, navigate]);
+
+  // Set initial load to false after a short delay
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setInitialLoad(false);
+    }, 2000); // Give 2 seconds for initial auth check
+    
+    return () => clearTimeout(timer);
+  }, []);
 
   const handleLogin = () => {
     login(); // Call the login function from our context
@@ -54,6 +66,46 @@ const Login: React.FC = () => {
     console.log('Reload button clicked');
     window.location.reload();
   };
+
+  // Loading state with improved messaging
+  if (isLoading || initialLoad) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          minHeight: '100vh',
+          background: `linear-gradient(135deg, ${theme.palette.primary.main}20 0%, ${theme.palette.secondary.main}20 100%)`,
+          p: 3
+        }}
+      >
+        <Paper
+          elevation={3}
+          sx={{
+            p: 4,
+            borderRadius: 2,
+            textAlign: 'center',
+            backgroundColor: theme.palette.background.paper,
+            backdropFilter: 'blur(10px)',
+            minWidth: 300
+          }}
+        >
+          <CircularProgress size={60} sx={{ mb: 3, color: theme.palette.primary.main }} />
+          <Typography variant="h6" gutterBottom>
+            {initialLoad ? 'Welcome to Denker!' : 'Almost there...'}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {initialLoad 
+              ? 'Setting up your AI assistant for maximum productivity' 
+              : 'Completing your secure login to get started'
+            }
+          </Typography>
+        </Paper>
+      </Box>
+    );
+  }
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>

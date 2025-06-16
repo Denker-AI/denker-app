@@ -29,7 +29,8 @@ export const useFileListing = () => {
     deselectFile,
     toggleFileSelection,
     clearSelection,
-    getSelectedFiles
+    getSelectedFiles,
+    _hasHydrated
   } = useFileStore();
 
   // Track initialization state to avoid redundant loading
@@ -40,10 +41,11 @@ export const useFileListing = () => {
    * @returns Array of files
    */
   const loadFiles = useCallback(async () => {
-    console.log('[useFileListing] loadFiles called. Current loadState:', state.loadState);
-    // Skip loading if already in progress
-    if (state.loadState === FileLoadState.LOADING) {
-      return files;
+    console.log('[useFileListing] loadFiles called. Current loadState:', state.loadState, '_hasHydrated:', _hasHydrated);
+    // Skip loading if already in progress or not hydrated
+    if (state.loadState === FileLoadState.LOADING || !_hasHydrated) {
+      if (!_hasHydrated) console.log('[useFileListing] loadFiles skipped: store not hydrated yet.');
+      return files || []; // Return current files (or empty if undefined) if skipped
     }
 
     setState({
@@ -87,35 +89,37 @@ export const useFileListing = () => {
       
       return [];
     }
-  }, [api, files, setFiles, state.loadState]);
+  }, [api, files, setFiles, state.loadState, _hasHydrated]);
 
-  // Load files on mount if not already initialized
+  // Load files on mount if not already initialized and store is hydrated
   useEffect(() => {
-    console.log('[useFileListing] Mount effect. isInitialized:', isInitialized);
-    if (!isInitialized) {
-      console.log('[useFileListing] Mount effect: Calling loadFiles.');
+    console.log('[useFileListing] Mount effect. isInitialized:', isInitialized, '_hasHydrated:', _hasHydrated);
+    if (!isInitialized && _hasHydrated) {
+      console.log('[useFileListing] Mount effect: Calling loadFiles because not initialized and store hydrated.');
       loadFiles();
+    } else if (!_hasHydrated) {
+      console.log('[useFileListing] Mount effect: Waiting for file store hydration.');
     }
-  }, [isInitialized, loadFiles]);
+  }, [isInitialized, loadFiles, _hasHydrated]);
 
-  /**
-   * Refresh files periodically
-   */
-  useEffect(() => {
-    // Skip if not initialized
-    if (!isInitialized) return;
-    console.log('[useFileListing] Refresh interval setup.');
+  // /**
+  //  * Refresh files periodically
+  //  */
+  // useEffect(() => {
+  //   // Skip if not initialized
+  //   if (!isInitialized) return;
+  //   console.log('[useFileListing] Refresh interval setup.');
 
-    // Refresh every 30 seconds
-    const intervalId = setInterval(() => {
-      console.log('[useFileListing] Interval: Calling loadFiles.');
-      loadFiles().catch(err => {
-        console.error('Error refreshing files:', err);
-      });
-    }, 30000);
+  //   // Refresh every 30 seconds
+  //   const intervalId = setInterval(() => {
+  //     console.log('[useFileListing] Interval: Calling loadFiles.');
+  //     loadFiles().catch(err => {
+  //       console.error('Error refreshing files:', err);
+  //     });
+  //   }, 30000);
 
-    return () => clearInterval(intervalId);
-  }, [isInitialized, loadFiles]);
+  //   return () => clearInterval(intervalId);
+  // }, [isInitialized, loadFiles]);
 
   /**
    * Listen for file state changes from other components
@@ -155,20 +159,20 @@ export const useFileListing = () => {
   /**
    * Filter files that are not deleted
    */
-  const activeFiles = files.filter(file => !file.isDeleted);
+  const activeFiles = _hasHydrated && files ? files.filter(file => !file.isDeleted) : [];
 
   /**
    * Transform files for UI display
    */
-  const fileList: FileListItem[] = activeFiles.map(file => ({
+  const fileList: FileListItem[] = _hasHydrated && activeFiles ? activeFiles.map(file => ({
     ...file,
     isSelected: selectedFileIds.includes(file.id)
-  }));
+  })) : [];
 
   /**
    * Get selected files
    */
-  const selectedFiles = getSelectedFiles();
+  const selectedFiles = _hasHydrated ? getSelectedFiles() : [];
 
   return {
     files: fileList,

@@ -5,20 +5,46 @@ const os = require('os');
 const http = require('http');
 const url = require('url');
 const { createAuthServer } = require('./auth-server');
+const { spawn, exec } = require('child_process');
+const Store = require('electron-store');
 const startupLogPath = path.join(os.homedir(), 'denker_electron_startup_log.txt');
+const debugLogPath = path.join(os.homedir(), 'denker_debug_full.log');
 fs.writeFileSync(startupLogPath, `Electron main process (electron.js) started at ${new Date().toISOString()}\n`, { flag: 'a' });
+
+// Enhanced logging for debugging GUI launches
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+console.log = function(...args) {
+  const timestamp = new Date().toISOString();
+  const message = `[${timestamp}] LOG: ${args.join(' ')}\n`;
+  try {
+    fs.appendFileSync(debugLogPath, message);
+  } catch (e) {
+    // Ignore file write errors
+  }
+  originalConsoleLog.apply(console, args);
+};
+
+console.error = function(...args) {
+  const timestamp = new Date().toISOString();
+  const message = `[${timestamp}] ERROR: ${args.join(' ')}\n`;
+  try {
+    fs.appendFileSync(debugLogPath, message);
+  } catch (e) {
+    // Ignore file write errors
+  }
+  originalConsoleError.apply(console, args);
+};
 
 console.log('🚀 electron.js script started. Timestamp:', Date.now());
 fs.appendFileSync(startupLogPath, `Initial console.log in electron.js executed at ${new Date().toISOString()}\n`);
-const { app, BrowserWindow, ipcMain, globalShortcut, screen, Tray, Menu, clipboard, dialog, desktopCapturer, protocol, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, screen, Tray, Menu, clipboard, dialog, desktopCapturer, protocol, shell, systemPreferences } = require('electron');
 fs.appendFileSync(startupLogPath, `Electron modules imported at ${new Date().toISOString()}\n`);
 const isDev = process.env.NODE_ENV === 'development';
 if (isDev) {
   require('dotenv').config({ path: path.join(__dirname, '../.env') });
 }
-
-// Initialize store for app settings
-const Store = require('electron-store');
 
 // Initialize store for app settings
 const store = new Store();
@@ -28,6 +54,8 @@ let mainWindow = null;
 let subWindow = null;
 let tray = null;
 let authServer = null;
+let restartDialogWindow = null; // Added for custom dialog
+let backendProc = null; // Add global reference to track the local-backend process
 
 // Window dimensions and positions
 const MAIN_WINDOW_WIDTH_RATIO = 0.25; // 1/4 of screen width
@@ -43,56 +71,161 @@ let lastClipboardText = '';
 const MAX_CLIPBOARD_AGE = 20000;
 
 // Add API configuration
-const API_URL = process.env.VITE_API_URL || 'http://127.0.0.1:8001/api/v1';
+let API_URL;
+let WS_URL;
 
-// Ensure WS_URL is the base URL without /api/v1
-// let rawWsUrl = process.env.VITE_WS_URL;
-// if (rawWsUrl) {
-//   // If VITE_WS_URL is set, remove /api/v1 if it exists at the end
-//   rawWsUrl = rawWsUrl.replace(/\/api\/v1\/?$/, '');
-// }
-// const WS_URL = rawWsUrl || 'ws://127.0.0.1:8001'; // Default if not set or after stripping
-// console.log('[electron.js] Determined WS_URL:', WS_URL); // Debug log
-
-let determinedWsUrl;
-const envWsUrl = process.env.VITE_WS_URL;
-
-if (envWsUrl) {
-    try {
-        const parsedUrl = new URL(envWsUrl);
-        determinedWsUrl = `${parsedUrl.protocol}//${parsedUrl.host}`; // Reconstruct without path
-        console.log(`[electron.js] Used envWsUrl ('${envWsUrl}') and reconstructed to: ${determinedWsUrl}`);
-    } catch (e) {
-        console.warn(`[electron.js] process.env.VITE_WS_URL ('${envWsUrl}') is invalid, falling back to default. Error: ${e.message}`);
-        determinedWsUrl = 'ws://127.0.0.1:8001';
-    }
+if (isDev) {
+  API_URL = process.env.VITE_API_URL_DEV || 'http://127.0.0.1:8001/api/v1';
+  // Derive WS_URL from API_URL for dev to keep them in sync
+  try {
+    const apiUrlObj = new URL(API_URL);
+    const protocol = apiUrlObj.protocol === 'https:' ? 'wss:' : 'ws:';
+    WS_URL = `${protocol}//${apiUrlObj.host}`;
+  } catch (e) {
+    console.warn(`[electron.js] Could not parse VITE_API_URL_DEV ('${API_URL}') to derive WS_URL. Falling back to default. Error: ${e.message}`);
+    WS_URL = 'ws://127.0.0.1:8001';
+  }
+  console.log(`[electron.js] Development URLs: API_URL=${API_URL}, WS_URL=${WS_URL}`);
 } else {
-    console.log('[electron.js] process.env.VITE_WS_URL not set, using default.');
-    determinedWsUrl = 'ws://127.0.0.1:8001';
+  // In production, use specific PROD environment variables or fallbacks
+  API_URL = process.env.VITE_API_URL_PROD || 'https://denker-backend-052025-635468353975.europe-west3.run.app/api/v1'; // Replace with your actual prod API URL
+  // For WS_URL in production, you might have a different domain or it might be derived.
+  // If VITE_WS_URL_PROD is explicitly set, use it. Otherwise, derive from API_URL_PROD.
+  if (process.env.VITE_WS_URL_PROD) {
+    WS_URL = process.env.VITE_WS_URL_PROD;
+  } else {
+    try {
+      const apiUrlObj = new URL(API_URL); // Use the production API_URL
+      const protocol = apiUrlObj.protocol === 'https:' ? 'wss:' : 'ws:';
+      WS_URL = `${protocol}//${apiUrlObj.host}`;
+    } catch (e) {
+      console.warn(`[electron.js] Could not parse VITE_API_URL_PROD ('${API_URL}') to derive WS_URL. Falling back. Error: ${e.message}`);
+      // Fallback to a placeholder or a sensible default if parsing fails
+      WS_URL = 'wss://denker-backend-052025-635468353975.europe-west3.run.app'; // Replace or ensure API_URL_PROD is a valid URL
+    }
+  }
+  console.log(`[electron.js] Production URLs: API_URL=${API_URL}, WS_URL=${WS_URL}`);
 }
-
-const WS_URL = determinedWsUrl;
-console.log('[electron.js] Final Determined WS_URL:', WS_URL);
 
 const API_KEY = process.env.VITE_API_KEY;
 
+// Function to free a port
+function freePort(port, callback) {
+  const platform = process.platform;
+  let findProcessCommand;
+
+  console.log(`[PortManager] Attempting to free port ${port} on platform ${platform}...`);
+
+  const execPromise = (command) => {
+    return new Promise((resolve) => {
+      exec(command, (err, stdout, stderr) => {
+        // lsof exits with 1 if it finds no process, which is not a true error for us.
+        if (err && !(stdout === '' && stderr === '' && err.code === 1)) {
+          console.warn(`[PortManager] Command '${command}' may have failed: ${err.message}`);
+          resolve({ err, stdout, stderr });
+          return;
+        }
+        if (stderr) {
+            console.warn(`[PortManager] Command '${command}' produced stderr: ${stderr}`);
+        }
+        resolve({ stdout, stderr });
+      });
+    });
+  };
+
+  const findAndKill = async () => {
+    try {
+      if (platform === 'darwin' || platform === 'linux') {
+        const { stdout: pidsOut, err: lsofErr } = await execPromise(`lsof -i :${port} -t`);
+
+        if (lsofErr && !pidsOut.trim()) {
+            console.log(`[PortManager] No process found on port ${port} (lsof exited with error but no output).`);
+            return callback();
+        }
+
+        const pids = pidsOut.toString().split('\n').filter(pid => pid.trim() !== '');
+        
+        if (pids.length > 0) {
+          console.log(`[PortManager] Found PIDs on port ${port}: ${pids.join(', ')}. Attempting to kill...`);
+          const killPromises = pids.map(pid => {
+            console.log(`[PortManager] Sending kill -9 to PID ${pid}`);
+            return execPromise(`kill -9 ${pid}`);
+          });
+          
+          const results = await Promise.all(killPromises);
+          
+          results.forEach(({err}, index) => {
+              if (err) {
+                  console.error(`[PortManager] Failed to kill process ${pids[index]}: ${err.message}`);
+              } else {
+                  console.log(`[PortManager] Successfully signaled process ${pids[index]} to terminate.`);
+              }
+          });
+
+          console.log(`[PortManager] Kill attempts for port ${port} finished.`);
+          setTimeout(callback, 1000); // Increased delay for OS to release port
+        } else {
+          console.log(`[PortManager] No running process found on port ${port}.`);
+          callback();
+        }
+      } else if (platform === 'win32') {
+        findProcessCommand = `netstat -ano | findstr :${port}`;
+        const { stdout: netstatOut } = await execPromise(findProcessCommand);
+        const lines = netstatOut.toString().split('\n');
+        let pidFound = null;
+        const listeningRegex = new RegExp(`:${port}\\s+.*LISTENING\\s+(\\d+)`, 'i');
+
+        for (const line of lines) {
+            const match = line.match(listeningRegex);
+            if (match && match[1]) {
+            pidFound = match[1];
+            break;
+            }
+        }
+
+        if (pidFound) {
+            console.log(`[PortManager] Process ${pidFound} found on port ${port}. Attempting to kill.`);
+            await execPromise(`taskkill /PID ${pidFound} /F /T`);
+            console.log(`[PortManager] Successfully killed process ${pidFound} on port ${port}`);
+            setTimeout(callback, 500); // Short delay
+        } else {
+            console.log(`[PortManager] No process found listening on port ${port}.`);
+            callback();
+        }
+      } else {
+        console.warn(`[PortManager] Unsupported platform: ${platform}. Cannot automatically free port.`);
+        callback();
+      }
+    } catch (error) {
+        console.error(`[PortManager] An unexpected error occurred in findAndKill for port ${port}:`, error);
+        callback(); // proceed anyway to not block app startup
+    }
+  };
+
+  findAndKill();
+}
+
 // Store the API URLs for use in the renderer
 const RENDERER_ENV_VARS = {
-  VITE_API_URL: API_URL,
-  VITE_WS_URL: WS_URL, // This will now be correctly ws://127.0.0.1:8001
+  VITE_API_URL: API_URL, // This will now be correctly http://127.0.0.1:8001/api/v1 in dev, or prod URL
+  VITE_WS_URL: WS_URL, // This will now be correctly ws://127.0.0.1:8001 in dev, or prod URL
   VITE_API_KEY: API_KEY,
   // Add Auth0 configuration with hard-coded fallbacks for production
   VITE_AUTH0_DOMAIN: process.env.VITE_AUTH0_DOMAIN || 'auth.denker.ai',
   VITE_AUTH0_CLIENT_ID: process.env.VITE_AUTH0_CLIENT_ID || 'lq6uzeeUp9i14E8FNpJwr0DVIP5VtOzQ',
   VITE_AUTH0_AUDIENCE: process.env.VITE_AUTH0_AUDIENCE || 'https://api.denker.ai',
-  VITE_NODE_ENV: process.env.VITE_NODE_ENV || (isDev ? 'development' : 'production')
+  VITE_NODE_ENV: isDev ? 'development' : 'production', // Correctly set NODE_ENV
+  VITE_VERTEX_AI_PROJECT_ID: process.env.VITE_VERTEX_AI_PROJECT_ID || 'modular-bucksaw-424010-p6' // Add Vertex AI Project ID
 };
 
 console.log('🔧 Environment variables for renderer:', {
+  VITE_API_URL: RENDERER_ENV_VARS.VITE_API_URL,
+  VITE_WS_URL: RENDERER_ENV_VARS.VITE_WS_URL,
   VITE_AUTH0_DOMAIN: RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN,
   VITE_AUTH0_CLIENT_ID: RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID ? RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID.substring(0, 8) + '...' : 'MISSING',
   VITE_AUTH0_AUDIENCE: RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE,
   VITE_NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV,
+  VITE_VERTEX_AI_PROJECT_ID: RENDERER_ENV_VARS.VITE_VERTEX_AI_PROJECT_ID,
   isDev
 });
 
@@ -105,104 +238,398 @@ app.whenReady().then(() => {
   fs.appendFileSync(startupLogPath, `app.whenReady resolved at ${new Date().toISOString()}\n`);
   console.log('🚀 electron.js: app.whenReady() for main window creation has resolved. Timestamp:', Date.now());
 
-  console.log('🚀 electron.js: Calling createMainWindow() from app.whenReady(). Timestamp:', Date.now());
-  setupAuth0Authentication();
+  // FIXED: Use consistent temp workspace location that matches chart/markdown creation
+  // This ensures files created by agents are accessible by filesystem operations
+  const defaultMcpFsRoot = path.join(require('os').tmpdir(), 'denker_workspace', 'default');
+  try {
+    if (!fs.existsSync(defaultMcpFsRoot)) {
+      fs.mkdirSync(defaultMcpFsRoot, { recursive: true });
+      console.log(`[electron.js] Created default MCP filesystem root: ${defaultMcpFsRoot}`);
+    }
+  } catch (err) {
+    console.error(`[electron.js] Error creating default MCP filesystem root at ${defaultMcpFsRoot}:`, err);
+  }
+
+  // Define path for user settings file (to be managed by FastAPI, but Electron tells FastAPI where it is)
+  const userSettingsFilePath = path.join(app.getPath('userData'), 'denker_user_settings.json');
+  console.log(`[electron.js] User settings file path determined as: ${userSettingsFilePath}`);
+
+  // Register ALL critical IPC handlers needed by preload/renderer at startup
+  // BEFORE creating the main window.
+  console.log('[*] Registering critical IPC Handlers...');
+
+  // IPC handler to provide environment variables to the renderer
+  // Cache to reduce redundant logging for env vars requests (performance optimization)
+  let envVarsRequestCount = 0;
+  ipcMain.handle('get-renderer-env-vars', () => {
+    envVarsRequestCount++;
+    // Only log the first few requests to reduce startup overhead
+    if (envVarsRequestCount <= 3) {
+      console.log(`[electron.js IPC] Request received for RENDERER_ENV_VARS (${envVarsRequestCount}).`);
+      console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_WS_URL is:', RENDERER_ENV_VARS.VITE_WS_URL);
+      console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_API_URL is:', RENDERER_ENV_VARS.VITE_API_URL);
+      console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_NODE_ENV is:', RENDERER_ENV_VARS.VITE_NODE_ENV);
+    } else if (envVarsRequestCount === 4) {
+      console.log('[electron.js IPC] Further RENDERER_ENV_VARS requests will not be logged to reduce overhead...');
+    }
+    return RENDERER_ENV_VARS;
+  });
+  console.log("🔧 IPC handler 'get-renderer-env-vars' registered.");
+
+  // IPC handler for opening directory dialog
+  ipcMain.handle('dialog:openDirectory', async () => {
+    if (!mainWindow) {
+      console.error('Cannot show open directory dialog: mainWindow is not available.');
+      return null;
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory']
+    });
+    if (canceled || filePaths.length === 0) {
+      console.log('Open directory dialog was canceled or no path selected.');
+      return null;
+    } else {
+      console.log('Directory selected:', filePaths[0]);
+      return filePaths[0];
+    }
+  });
+  console.log("📂 IPC handler 'dialog:openDirectory' registered.");
+
+  // IPC handler for restarting the app
+  ipcMain.handle('restart-app', () => {
+    console.log('[electron.js IPC] Request received to restart the application.');
+    app.relaunch();
+    cleanupAndQuit();
+  });
+  console.log("🔄 IPC handler 'restart-app' registered.");
+
+  // IPC handler for showing a restart confirmation dialog
+  ipcMain.handle('show-restart-dialog', async (event, options) => {
+    // Close existing custom dialog if any
+    if (restartDialogWindow) {
+      restartDialogWindow.close();
+      restartDialogWindow = null;
+    }
+
+    const dialogOptions = {
+      title: options?.title || 'Restart Required',
+      message: options?.message || 'Application settings have changed.',
+      detail: options?.detail || 'A restart is recommended for all changes to take effect.',
+    };
+
+    restartDialogWindow = new BrowserWindow({
+      width: 380,
+      height: 270,
+      parent: mainWindow, // Make it a child of the main window
+      modal: true,       // Make it modal to the parent
+      frame: false,
+      transparent: true,
+      show: false,
+      skipTaskbar: true,
+      resizable: false,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload-dialog.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+      },
+    });
+
+    const queryParams = new URLSearchParams(dialogOptions).toString();
+    const dialogUrl = isDev
+      ? `http://localhost:5173/restart-dialog.html?${queryParams}`
+      : `file://${path.join(__dirname, 'restart-dialog.html')}?${queryParams}`;
+
+    restartDialogWindow.loadURL(dialogUrl);
+
+    // No menu for this dialog
+    restartDialogWindow.setMenu(null);
+
+    return new Promise((resolve) => {
+      // Listen for response from the dialog window
+      ipcMain.once('custom-restart-dialog-response', (event, action) => {
+        if (restartDialogWindow && !restartDialogWindow.isDestroyed()) {
+          restartDialogWindow.close();
+        }
+        restartDialogWindow = null;
+
+        if (action === 'restart') {
+          console.log('[electron.js IPC] User chose to restart now from custom dialog. Delaying for 1 second.');
+          setTimeout(() => {
+            console.log('[electron.js IPC] Restarting application after 1-second delay.');
+            app.relaunch();
+            cleanupAndQuit();
+          }, 1000); // 1000 milliseconds = 1 second
+          resolve({ response: 0 }); // Corresponds to 'Restart Now'
+        } else { // 'later' or closed
+          console.log('[electron.js IPC] User chose "Later" or closed the custom dialog.');
+          resolve({ response: 1 }); // Corresponds to 'Later'
+        }
+      });
+
+      restartDialogWindow.once('ready-to-show', () => {
+          if (restartDialogWindow) restartDialogWindow.show();
+      });
+
+      restartDialogWindow.on('closed', () => {
+        // If the window is closed without a choice (e.g., via DevTools), treat as 'later'
+        ipcMain.removeHandler('custom-restart-dialog-response'); // Clean up listener
+        if (restartDialogWindow) { // Check if it wasn't already nullified by a choice
+           resolve({ response: 1 }); // Corresponds to 'Later'
+        }
+        restartDialogWindow = null;
+      });
+    });
+  });
+  console.log("💬 IPC handler 'show-restart-dialog' registered (now uses custom window).");
+
+  // IPC handler for restarting local backend (placeholder, as app restart is preferred for now)
+  // COMMENTED OUT: This was causing multiple backend processes to be spawned
+  // The main backend spawning logic during app startup is sufficient
+  /*
+  ipcMain.handle('request-restart-local-backend', async () => {
+    console.log('[electron.js IPC] Received request to restart local backend. Implementing proper restart...');
+    
+    try {
+      // Kill existing backend process
+      if (backendProc) {
+        console.log(`[electron.js] Killing existing backend process (PID: ${backendProc.pid})`);
+        backendProc.kill('SIGTERM');
+        
+        // Wait for process to exit
+        await new Promise((resolve) => {
+          if (backendProc) {
+            backendProc.on('close', resolve);
+            setTimeout(resolve, 3000); // Timeout after 3 seconds
+          } else {
+            resolve();
+          }
+        });
+        
+        backendProc = null;
+      }
+      
+      // Only restart in production mode
+      if (!isDev) {
+        // Re-spawn the backend using the same logic as startup
+        const resourcesBinDir = path.join(process.resourcesPath, 'bin');
+        const backendExecutableName = process.platform === 'win32' ? 'local-backend-pkg.exe' : 'local-backend-pkg';
+        const backendPath = path.join(process.resourcesPath, 'local-backend-pkg', backendExecutableName);
+        
+        // Use the same environment as startup
+        const backendEnv = {
+          ...process.env,
+          DENKER_USER_SETTINGS_PATH: path.join(app.getPath('userData'), 'denker_user_settings.json'),
+          VITE_API_URL: RENDERER_ENV_VARS.VITE_API_URL,
+          AUTH0_DOMAIN: RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN,
+          AUTH0_API_AUDIENCE: RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE,
+          AUTH0_CLIENT_ID: RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID,
+          VERTEX_AI_PROJECT_ID: RENDERER_ENV_VARS.VITE_VERTEX_AI_PROJECT_ID,
+          VERTEX_AI_LOCATION: 'europe-west4',
+          NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV,
+          QDRANT_URL: 'https://f1f12584-e161-4974-b6fa-eb2e8bc3fdfc.europe-west3-0.gcp.cloud.qdrant.io',
+          QDRANT_API_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.u7ZjD6dc0cEIMMX2ZxDHio-xD1IIjwYaTSm3PZ-dLEE',
+          QDRANT_COLLECTION_NAME: 'denker_embeddings',
+          EMBEDDING_MODEL: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+          VECTOR_NAME: 'fast-paraphrase-multilingual-minilm-l12-v2',
+          ANTHROPIC_API_KEY: "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",
+          DENKER_DEV_MODE: 'false', // Explicitly set for production
+          DENKER_COORDINATOR_TIMEOUT_SECONDS: '120' // Set coordinator timeout to 2 minutes (120 seconds)
+        };
+        
+        // Free port and restart
+        freePort(9001, () => {
+          console.log('[electron.js] Restarting local-backend-pkg...');
+          backendProc = spawn(backendPath, [], { stdio: 'inherit', env: backendEnv });
+          
+          backendProc.on('error', (spawnError) => {
+            console.error(`[electron.js] Failed to restart local-backend-pkg: ${spawnError.message}`);
+            backendProc = null;
+          });
+          
+          backendProc.on('close', (code) => {
+            console.log(`Restarted local-backend-pkg exited with code ${code}`);
+            backendProc = null;
+          });
+          
+          if (backendProc && backendProc.pid) {
+            console.log(`[electron.js] Local backend restarted with PID: ${backendProc.pid}`);
+          }
+        });
+      }
+      
+      return { success: true, message: "Local backend restarted successfully" };
+    } catch (error) {
+      console.error('[electron.js] Error restarting local backend:', error);
+      return { success: false, message: `Failed to restart local backend: ${error.message}` };
+    }
+  });
+  */
+
+  // For now, return a simple message that app restart is preferred
+  ipcMain.handle('request-restart-local-backend', async () => {
+    console.log('[electron.js IPC] Backend restart requested, but disabled to prevent multiple processes. App restart is preferred.');
+    return { success: false, message: "Backend restart disabled. Please restart the entire app instead." };
+  });
+
+  // Setup all Auth0 related IPC handlers
+  setupAuth0Authentication(); // This function will now register login, logout, get-access-token, get-user-info, dev-process-auth0-callback
+
+  console.log('🚀 electron.js: Calling createMainWindow() after IPC handler registration. Timestamp:', Date.now());
   createMainWindow();
   registerGlobalShortcut();
   setupClipboardMonitor();
   setupAppMenu();
 
+  // --- SPAWN LOCAL BACKEND AND MCP SERVERS IN PRODUCTION ONLY ---
+  if (!isDev) {
+    // Path helpers for production
+    const resourcesBinDir = path.join(process.resourcesPath, 'bin'); // For pandoc, tesseract etc.
+    
+    // Determine the correct executable name based on platform
+    // PyInstaller names the executable inside the onedir bundle the same as the --name argument.
+    const backendExecutableName = process.platform === 'win32' ? 'local-backend-pkg.exe' : 'local-backend-pkg';
+    // The executable is at the root of the 'local-backend-pkg' folder copied into resources.
+    const backendPath = path.join(process.resourcesPath, 'local-backend-pkg', backendExecutableName);
+    
+    // Prepare environment for the backend process
+    const backendEnv = {
+      ...process.env, // Inherit current environment variables
+      // Add the bin directory to PATH so backend can find pandoc, tesseract, etc.
+      PATH: `${resourcesBinDir}:${process.env.PATH || '/usr/local/bin:/usr/bin:/bin'}`,
+      DENKER_USER_SETTINGS_PATH: userSettingsFilePath, // Add path to user settings file
+      // Pass the remote API URL that Electron is aware of (from its own env/config)
+      // to the Python backend, so it knows where the remote API is.
+      VITE_API_URL: RENDERER_ENV_VARS.VITE_API_URL, 
+      // Pass Auth0 and Vertex AI details required by the local backend's settings
+      AUTH0_DOMAIN: RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN,
+      AUTH0_API_AUDIENCE: RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE,
+      // Note: The local backend's settings.py might expect AUTH0_CLIENT_ID if it needs to perform specific client-side Auth0 actions,
+      // but typically client_id is for frontend/public clients. If local-backend needs it for *its own* interactions, add it.
+      // For now, assuming AUTH0_DOMAIN and AUTH0_API_AUDIENCE are the primary ones needed by local-backend settings.
+      // Let's add VITE_AUTH0_CLIENT_ID as well, as it's often useful for backend services too.
+      AUTH0_CLIENT_ID: RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID,
+      VERTEX_AI_PROJECT_ID: RENDERER_ENV_VARS.VITE_VERTEX_AI_PROJECT_ID,
+      VERTEX_AI_LOCATION: 'europe-west4', // Added
+      NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV, // Pass NODE_ENV as well
+      MPLBACKEND: 'Agg', // Non-interactive backend for unstructured
+      MPLCONFIGDIR: path.join(require('os').tmpdir(), 'denker_matplotlib_cache'), // Writable cache directory
+      VITE_NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV, // Pass NODE_ENV as well
+      QDRANT_URL: 'https://f1f12584-e161-4974-b6fa-eb2e8bc3fdfc.europe-west3-0.gcp.cloud.qdrant.io',
+      QDRANT_API_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.u7ZjD6dc0cEIMMX2ZxDHio-xD1IIjwYaTSm3PZ-dLEE',
+      QDRANT_COLLECTION_NAME: 'denker_embeddings',
+      EMBEDDING_MODEL: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
+      VECTOR_NAME: 'fast-paraphrase-multilingual-minilm-l12-v2',
+      ANTHROPIC_API_KEY: "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",
+      DENKER_DEV_MODE: 'false', // Explicitly set for production
+      DENKER_COORDINATOR_TIMEOUT_SECONDS: '120', // Set coordinator timeout to 2 minutes (120 seconds)
+      DENKER_MEMORY_DATA_PATH: path.join(require('os').homedir(), 'Library', 'Application Support', 'denker-app', 'memory_data'), // Writable memory data path
+      DENKER_SKIP_MEMORY_HEALTH_CHECK: 'true' // Skip memory health check for faster startup
+    };
+    // console.log(`[electron.js] Spawning local-backend with DENKER_DEFAULT_MCP_FS_ROOT=${defaultMcpFsRoot} and DENKER_USER_SETTINGS_PATH=${userSettingsFilePath}`);
+    // Enhanced logging for all critical env vars being passed
+    console.log(
+      `[electron.js] Spawning local-backend with ENV (production: ${!isDev}): ` +
+      `DENKER_USER_SETTINGS_PATH=${backendEnv.DENKER_USER_SETTINGS_PATH}, ` +
+      `VITE_API_URL=${backendEnv.VITE_API_URL}, ` +
+      `AUTH0_DOMAIN=${backendEnv.AUTH0_DOMAIN}, ` +
+      `AUTH0_API_AUDIENCE=${backendEnv.AUTH0_API_AUDIENCE}, ` +
+      `AUTH0_CLIENT_ID=${backendEnv.AUTH0_CLIENT_ID ? backendEnv.AUTH0_CLIENT_ID.substring(0,5) + '...' : 'MISSING'}, ` +
+      `VERTEX_AI_PROJECT_ID=${backendEnv.VERTEX_AI_PROJECT_ID}, `+
+      `VERTEX_AI_LOCATION=${backendEnv.VERTEX_AI_LOCATION}, `+
+      `NODE_ENV=${backendEnv.NODE_ENV}, ` +
+      `QDRANT_URL=${backendEnv.QDRANT_URL}, ` +
+      `QDRANT_COLLECTION_NAME=${backendEnv.QDRANT_COLLECTION_NAME}, ` +
+      `EMBEDDING_MODEL=${backendEnv.EMBEDDING_MODEL}, ` +
+      `VECTOR_NAME=${backendEnv.VECTOR_NAME}, ` +
+      `DENKER_DEV_MODE=${backendEnv.DENKER_DEV_MODE}, ` +
+      `DENKER_MEMORY_DATA_PATH=${backendEnv.DENKER_MEMORY_DATA_PATH}, ` +
+      `DENKER_SKIP_MEMORY_HEALTH_CHECK=${backendEnv.DENKER_SKIP_MEMORY_HEALTH_CHECK}, ` +
+      `PATH=${backendEnv.PATH}`
+    );
+
+    console.log(`[electron.js] Attempting to free port 9001 before starting local backend...`);
+    freePort(9001, () => {
+      console.log(`[electron.js] Port 9001 free-up attempt complete. Spawning local-backend-pkg...`);
+      
+      // Store the process globally for cleanup
+      // Use 'pipe' instead of 'inherit' to avoid broken pipe issues in GUI app
+      // Set working directory to a writable location so relative paths work
+      const memoryDataDir = path.join(require('os').homedir(), 'Library', 'Application Support', 'denker-app');
+      // Ensure the directory exists
+      if (!fs.existsSync(memoryDataDir)) {
+        fs.mkdirSync(memoryDataDir, { recursive: true });
+      }
+      
+      backendProc = spawn(backendPath, [], { 
+        stdio: ['ignore', 'pipe', 'pipe'], // stdin: ignore, stdout: pipe, stderr: pipe
+        env: backendEnv,
+        cwd: memoryDataDir // Set working directory to writable location
+      });
+      
+      // Handle backend stdout/stderr
+      if (backendProc.stdout) {
+        backendProc.stdout.on('data', (data) => {
+          console.log(`[BACKEND] stdout: ${data.toString()}`);
+        });
+      }
+      
+      if (backendProc.stderr) {
+        backendProc.stderr.on('data', (data) => {
+          console.log(`[BACKEND] stderr: ${data.toString()}`);
+        });
+      }
+      
+      backendProc.on('error', (spawnError) => {
+        console.error(`[electron.js] Failed to start local-backend-pkg: ${spawnError.message}`);
+        dialog.showErrorBox('Backend Error', `Failed to start the local backend process: ${spawnError.message}. Please ensure no other instances are running and try restarting the app.`);
+        backendProc = null; // Clear reference on error
+        
+        // Notify frontend of backend failure
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('backend-failed', `Backend process failed to start: ${spawnError.message}`);
+        }
+      });
+      
+      backendProc.on('close', (code) => {
+        console.log(`local-backend-pkg (PyInstaller) exited with code ${code}`);
+        backendProc = null; // Clear reference when process exits
+        isBackendReady = false; // Mark backend as not ready
+        
+        // Notify frontend that backend stopped
+        if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('backend-stopped', `Backend process exited with code ${code}`);
+        }
+      });
+      
+      // Store PID for debugging
+      if (backendProc && backendProc.pid) {
+        console.log(`[electron.js] Local backend started with PID: ${backendProc.pid}`);
+        
+        // Start health checking after a brief delay to let the process initialize
+        setTimeout(() => {
+          checkBackendHealth();
+        }, 2000); // Reduced from 5 seconds to 2 seconds since backend startup is optimized
+      }
+    });
+  } else {
+    // In development mode, assume backend is managed separately
+    // Still check if it's ready for consistency
+    setTimeout(() => {
+      checkBackendHealth();
+    }, 1000); // Shorter delay in dev mode
+  }
+
   // --- ADD IPC Handlers for Auth --- 
   console.log('[*] Registering Auth IPC Handlers...');
   
   // Handler for renderer to request access token
-  ipcMain.handle('get-access-token', async () => {
-    const tokens = store.get(AUTH_TOKEN_KEY);
-    if (!tokens || !tokens.accessToken) {
-      console.log('[IPC get-access-token] No access token found.');
-      return null;
-}
-
-    // **TODO: Implement token expiry check and refresh logic here**
-    const expiryTime = tokens.receivedAt + (tokens.expiresIn * 1000);
-    if (Date.now() >= expiryTime) {
-        console.warn('[IPC get-access-token] Access token expired. Need refresh logic.');
-        // Attempt refresh here if refreshToken exists
-        // For now, return null, forcing re-login potentially
-        store.delete(AUTH_TOKEN_KEY); // Clear expired tokens
-        return null;
-    }
-  
-    console.log('[IPC get-access-token] Returning stored access token.');
-    return tokens.accessToken;
-  });
+  // MOVED to setupAuth0Authentication
     
   // --- ADDED: Handler for renderer to request user info --- 
-  ipcMain.handle('get-user-info', async () => {
-    const tokens = store.get(AUTH_TOKEN_KEY);
-    if (!tokens || !tokens.idToken) {
-      console.log('[IPC get-user-info] No ID token found.');
-      return null;
-    }
-    
-    try {
-      // Simple JWT decode (Payload only, no signature verification)
-      const payloadBase64 = tokens.idToken.split('.')[1];
-      const decodedJson = Buffer.from(payloadBase64, 'base64').toString('utf-8');
-      const payload = JSON.parse(decodedJson);
-    
-      // Extract common profile claims
-      const userInfo = {
-        name: payload.name,
-        nickname: payload.nickname,
-        picture: payload.picture,
-        email: payload.email,
-        email_verified: payload.email_verified,
-        sub: payload.sub // Subject (user ID)
-      };
-  
-      console.log('[IPC get-user-info] Returning user info:', { name: userInfo.name, email: userInfo.email });
-      return userInfo;
-    } catch (error) {
-      console.error('[IPC get-user-info] Error decoding ID token:', error);
-      return null; // Return null if decoding fails
-    }
-  });
+  // MOVED to setupAuth0Authentication
   
   // Handler for renderer to initiate logout
-  ipcMain.handle('logout', async () => {
-    console.log('🚪 Received logout request from renderer');
-    const tokens = store.get(AUTH_TOKEN_KEY);
-    store.delete(AUTH_TOKEN_KEY); // Clear local tokens immediately
-    console.log('[IPC logout] Local tokens cleared.');
-
-    const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
-    const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
-    
-    // Determine the correct returnTo URL based on environment
-    const returnTo = isDev 
-      ? 'http://localhost:5173' // Dev returns to Vite server (or wherever your app is)
-      : 'http://localhost:8123/logout-success'; // Packaged app returns to our local auth server's logout page
-
-    console.log(`[IPC logout] Using returnTo URL: ${returnTo}`);
-
-    const logoutUrl = new URL(`https://${auth0Domain}/v2/logout`);
-    logoutUrl.searchParams.append('client_id', clientId);
-    logoutUrl.searchParams.append('returnTo', returnTo); 
-
-    try {
-      console.log(`[IPC logout] Opening external browser for Auth0 logout: ${logoutUrl.toString()}`);
-      await shell.openExternal(logoutUrl.toString());
-      // Notify renderer that logout process started (optional, depends on desired UX)
-      if (mainWindow && mainWindow.webContents) {
-        mainWindow.webContents.send('auth-logged-out');
-    }
-      return { success: true };
-  } catch (error) {
-      console.error('❌ Failed to open external browser for logout:', error);
-      return { success: false, error: error.message || 'Failed to start logout process.' };
-    }
-  });
+  // MOVED to setupAuth0Authentication
   
   // Remove potentially conflicting old handlers if they exist
   console.log('[*] Cleaning up old IPC Handlers...');
@@ -213,18 +640,54 @@ app.whenReady().then(() => {
   // --- END Auth IPC Handlers ---
 
   // IPC handler to provide environment variables to the renderer
-  ipcMain.handle('get-renderer-env-vars', () => {
-    console.log('[electron.js IPC] Request received for RENDERER_ENV_VARS.');
-    console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_WS_URL is:', RENDERER_ENV_VARS.VITE_WS_URL);
-    console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_API_URL is:', RENDERER_ENV_VARS.VITE_API_URL);
-    console.log('[electron.js IPC] Current RENDERER_ENV_VARS.VITE_NODE_ENV is:', RENDERER_ENV_VARS.VITE_NODE_ENV);
-    return RENDERER_ENV_VARS;
-  });
+  // MOVED EARLIER, BEFORE createWindow call
 
   app.on('activate', function () {
     console.log('🚀 electron.js: app.on(\'activate\') triggered. Timestamp:', Date.now());
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
+});
+
+// Create a single, robust shutdown handler
+const cleanupAndQuit = () => {
+  console.log('🧹 Cleaning up before quit...');
+  
+  // Stop background token refresh
+  stopBackgroundTokenRefresh();
+  
+  // Kill backend process if it exists
+  if (backendProc) {
+    console.log('Terminating backend process...');
+    backendProc.kill('SIGTERM');
+    backendProc = null;
+  }
+  
+  // Unregister global shortcuts
+  globalShortcut.unregisterAll();
+  
+  // Quit the app
+  app.quit();
+};
+
+// --- Centralized Shutdown Logic ---
+// `before-quit` is a fallback event for cleanup if cleanupAndQuit() wasn't called directly
+app.on('before-quit', (event) => {
+  console.log('[LIFECYCLE] before-quit event triggered.');
+  
+  // Only prevent and cleanup if we haven't already started the cleanup process
+  if (!app.isQuitting) {
+    event.preventDefault(); // Prevent default quit behavior to run our logic
+    cleanupAndQuit();
+  } else {
+    console.log('[LIFECYCLE] Cleanup already in progress, allowing quit to proceed.');
+  }
+});
+
+// On macOS, it's common for apps to stay open when windows are closed.
+// We will explicitly quit using our consolidated method.
+app.on('window-all-closed', () => {
+  console.log('[LIFECYCLE] All windows closed. Quitting app.');
+  cleanupAndQuit();
 });
 
 // Add IPC handler for Auth0 redirect callback
@@ -324,9 +787,19 @@ function setupClipboardMonitor() {
 
 // Register global shortcut (Command+Shift+D)
 function registerGlobalShortcut() {
-  globalShortcut.register('CommandOrControl+Shift+D', async () => {
-    console.log('🎯 Global shortcut triggered');
-    try {
+  try {
+    console.log('🔑 Attempting to register global shortcut: CommandOrControl+Shift+D');
+    
+    // Check if shortcut is already registered
+    const isRegistered = globalShortcut.isRegistered('CommandOrControl+Shift+D');
+    if (isRegistered) {
+      console.warn('⚠️ Global shortcut CommandOrControl+Shift+D is already registered! Unregistering first...');
+      globalShortcut.unregister('CommandOrControl+Shift+D');
+    }
+    
+    const success = globalShortcut.register('CommandOrControl+Shift+D', async () => {
+      console.log('🎯 Global shortcut triggered');
+      try {
       // Get clipboard text
       const clipboardText = clipboard.readText();
       const clipboardAge = Date.now() - lastClipboardChangeTime;
@@ -343,31 +816,298 @@ function registerGlobalShortcut() {
       let screenshot = null;
       try {
         console.log('📸 Capturing screenshot...');
-        const sources = await desktopCapturer.getSources({
-          types: ['window'],
-          thumbnailSize: { width: 1920, height: 1080 }
-        });
-        console.log('📸 Available windows:', sources.map(s => s.name));
+        
+        // Check for macOS screen recording permissions
+        if (process.platform === 'darwin') {
+          const hasPermission = systemPreferences.getMediaAccessStatus('screen');
+          console.log('🔐 macOS screen recording permission status:', hasPermission);
+          
+          // Debug app identity information
+          console.log('🔍 App identity debug:', {
+            appPath: app.getAppPath(),
+            executablePath: process.execPath,
+            bundleId: 'com.denker.app',  // Use correct bundle ID from Info.plist
+            appGetName: app.getName(),   // Show what getName() returns for comparison
+            version: app.getVersion(),
+            isPackaged: app.isPackaged
+          });
+          
+          // Track whether native dialog appeared
+          let nativeDialogAppeared = false;
+          
+          // Always try to trigger permission dialog to register app properly
+          console.log('🔄 Triggering permission request to register app with macOS...');
+          try {
+            // Force a WINDOW capture attempt to trigger permission registration
+            // Note: We want window capture, not full screen capture
+            const sources = await desktopCapturer.getSources({
+              types: ['window'],  // Only windows, not full screen
+              thumbnailSize: { width: 10, height: 10 }
+            });
+            console.log('✅ Window capture permission request triggered, got', sources.length, 'window sources');
+            
+            // Check permission again after trigger
+            const newPermission = systemPreferences.getMediaAccessStatus('screen');
+            console.log('🔍 Permission after trigger:', newPermission);
+            
+            // Detect if native dialog appeared by checking permission state changes
+            // If permission went from 'not-determined' to 'denied' or 'granted', native dialog appeared
+            if (hasPermission === 'not-determined' && 
+                (newPermission === 'denied' || newPermission === 'granted')) {
+              nativeDialogAppeared = true;
+              console.log('🎯 Native macOS permission dialog appeared and user responded');
+            }
+            // If permission was already denied and we triggered but it's still denied,
+            // native dialog likely didn't appear (already decided)
+            else if (hasPermission === 'denied' && newPermission === 'denied') {
+              nativeDialogAppeared = false;
+              console.log('🚫 Native dialog did not appear (permission previously denied)');
+            }
+            // If permission was granted before, no dialog needed
+            else if (hasPermission === 'granted') {
+              nativeDialogAppeared = false; // No dialog needed
+              console.log('✅ Permission already granted, no dialog needed');
+            }
+            // If permission is still 'not-determined' after trigger, dialog might be showing
+            else if (hasPermission === 'not-determined' && newPermission === 'not-determined') {
+              // Wait a moment to see if user responds to native dialog
+              console.log('⏳ Permission still undetermined, waiting for potential native dialog response...');
+              await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+              
+              const delayedPermission = systemPreferences.getMediaAccessStatus('screen');
+              console.log('🔍 Permission after delay:', delayedPermission);
+              
+              if (delayedPermission !== 'not-determined') {
+                nativeDialogAppeared = true;
+                console.log('🎯 Native dialog appeared and user responded during delay');
+              } else {
+                nativeDialogAppeared = false;
+                console.log('⚠️ Native dialog may not have appeared or user hasn\'t responded yet');
+              }
+            }
+            
+          } catch (forceError) {
+            console.log('⚠️ Permission request trigger failed:', forceError.message);
+            nativeDialogAppeared = false;
+          }
+          
+          // Check final permission status
+          const finalPermission = systemPreferences.getMediaAccessStatus('screen');
+          console.log('🔐 Final permission status:', finalPermission);
+          
+          // Only show custom dialog if:
+          // 1. Permission is not granted AND
+          // 2. Native dialog did not appear (fallback case)
+          if (finalPermission !== 'granted' && !nativeDialogAppeared) {
+            console.warn('❌ Screen recording permission not granted and no native dialog appeared. Showing custom dialog as fallback.');
+            
+            // Show helpful dialog as fallback when native dialog doesn't appear
+            const result = await dialog.showMessageBox({
+              type: 'warning',
+              title: 'Screen Recording Permission Required',
+              message: 'Denker needs Screen Recording permission to capture screenshots.',
+              detail: 'Bundle ID: com.denker.app\nExecutable: /Applications/Denker.app/Contents/MacOS/Denker\n\nTo enable screenshots:\n\n1. Go to System Preferences > Privacy & Security\n2. Click on Screen Recording\n3. REMOVE any existing Denker entries\n4. Enable Denker (should auto-appear after this trigger)\n5. Restart Denker\n\nFor now, Denker will work with text-only mode.',
+              buttons: ['Continue Text-Only', 'Open System Preferences', 'Reset Permissions'],
+              defaultId: 0,
+              cancelId: 0
+            });
+            
+            if (result.response === 1) {
+              // Try multiple methods to open System Preferences
+              console.log('🔧 Attempting to open System Preferences...');
+              
+              try {
+                // Method 1: Try the new System Settings app (macOS 13+)
+                await shell.openExternal('x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension');
+              } catch (error1) {
+                console.warn('⚠️ Method 1 failed:', error1.message);
+                
+                try {
+                  // Method 2: Try the old System Preferences URL
+                  await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+                } catch (error2) {
+                  console.warn('⚠️ Method 2 failed:', error2.message);
+                  
+                  try {
+                    // Method 3: Open System Preferences directly (user navigates manually)
+                    await shell.openExternal('x-apple.systempreferences:');
+                  } catch (error3) {
+                    console.warn('⚠️ Method 3 failed:', error3.message);
+                    
+                    try {
+                      // Method 4: Fallback to opening via command line
+                      const { spawn } = require('child_process');
+                      spawn('open', ['-b', 'com.apple.systempreferences']);
+                      console.log('✅ Opened System Preferences via command line');
+                    } catch (error4) {
+                      console.error('❌ All methods failed:', error4.message);
+                      dialog.showErrorBox(
+                        'Cannot Open Settings', 
+                        'Please manually go to:\nSystem Preferences → Privacy & Security → Screen Recording\n\nThen enable Denker and restart the app.'
+                      );
+                    }
+                  }
+                }
+              }
+            } else if (result.response === 2) {
+              // Reset Permissions - nuclear option
+              console.log('💥 User requested permission reset');
+              
+              try {
+                const { spawn } = require('child_process');
+                
+                // Try to reset only Denker's permission (macOS 10.15+)
+                const bundleId = 'com.denker.app';  // Correct bundle ID from Info.plist
+                console.log(`🎯 Attempting to reset permission for bundle ID: ${bundleId}`);
+                
+                const resetResult = await new Promise((resolve, reject) => {
+                  // Try specific app reset first (works on newer macOS versions)
+                  const process = spawn('tccutil', ['reset', 'ScreenCapture', bundleId], {
+                    stdio: ['pipe', 'pipe', 'pipe']
+                  });
+                  
+                  let output = '';
+                  process.stdout.on('data', (data) => output += data.toString());
+                  process.stderr.on('data', (data) => data.toString());
+                  
+                  process.on('close', (code) => {
+                    if (code === 0) {
+                      resolve({ success: true, output, method: 'specific' });
+                    } else {
+                      console.warn(`⚠️ Specific reset failed (code ${code}), trying alternative method...`);
+                      
+                      // Fallback: Try removing via sqlite (more targeted)
+                      const sqlProcess = spawn('sqlite3', [
+                        '/Library/Application Support/com.apple.TCC/TCC.db',
+                        `DELETE FROM access WHERE service='kTCCServiceScreenCapture' AND client='${bundleId}';`
+                      ], { stdio: ['pipe', 'pipe', 'pipe'] });
+                      
+                      let sqlOutput = '';
+                      sqlProcess.stdout.on('data', (data) => sqlOutput += data.toString());
+                      sqlProcess.stderr.on('data', (data) => sqlOutput += data.toString());
+                      
+                      sqlProcess.on('close', (sqlCode) => {
+                        if (sqlCode === 0) {
+                          resolve({ success: true, output: sqlOutput, method: 'sqlite' });
+                        } else {
+                          reject(new Error(`Both methods failed. tccutil code: ${code}, sqlite code: ${sqlCode}`));
+                        }
+                      });
+                    }
+                  });
+                });
+                
+                console.log(`✅ Denker permission reset successfully using ${resetResult.method} method`);
+                dialog.showMessageBox({
+                  type: 'info',
+                  title: 'Denker Permissions Reset',
+                  message: 'Screen recording permission has been reset for Denker only.',
+                  detail: 'Other apps are not affected. Please restart Denker to grant permission again.'
+                });
+                
+              } catch (resetError) {
+                console.error('❌ Permission reset failed:', resetError.message);
+                dialog.showErrorBox(
+                  'Reset Failed',
+                  `Could not reset permissions: ${resetError.message}\n\nPlease manually remove Denker from Screen Recording settings and try again.`
+                );
+              }
+            }
+          } else if (finalPermission !== 'granted' && nativeDialogAppeared) {
+            console.log('🎯 Native macOS permission dialog appeared. User will decide. Not showing custom dialog.');
+          } else {
+            console.log('✅ Screen recording permission already granted or handled by native dialog.');
+          }
+        }
+        
+        // Check permission but still try capture since API can be unreliable
+        const permissionStatus = process.platform === 'darwin' ? systemPreferences.getMediaAccessStatus('screen') : 'granted';
+        console.log('🔐 Permission status from API:', permissionStatus);
+        
+        if (permissionStatus === 'denied') {
+          console.log('⚠️ API reports permission denied, but attempting capture anyway (API can be stale)');
+        }
+        
+        // Always try capture - let the actual capture attempt determine success
+        {
+          // Try multiple thumbnail sizes for better compatibility
+          const thumbnailSizes = [
+            { width: 1280, height: 720 },   // HD resolution
+            { width: 800, height: 600 },    // Smaller fallback
+            { width: 400, height: 300 }     // Smallest fallback
+          ];
+          
+          let sources = null;
+          let usedSize = null;
+          
+          for (const size of thumbnailSizes) {
+            try {
+              console.log(`📸 Trying thumbnail size: ${size.width}x${size.height}`);
+              sources = await desktopCapturer.getSources({
+                types: ['window'],
+                thumbnailSize: size,
+                fetchWindowIcons: false
+              });
+              
+              // Check if we got valid thumbnails
+              const validSources = sources.filter(s => s.thumbnail && !s.thumbnail.isEmpty());
+              if (validSources.length > 0) {
+                console.log(`✅ Got ${validSources.length} valid thumbnails with size ${size.width}x${size.height}`);
+                usedSize = size;
+                break;
+              } else {
+                console.warn(`⚠️ All thumbnails empty with size ${size.width}x${size.height} - likely permission issue`);
+              }
+            } catch (error) {
+              console.warn(`⚠️ Failed with size ${size.width}x${size.height}:`, error.message);
+            }
+          }
+          
+          if (!sources) {
+            console.error('❌ Failed to capture with any thumbnail size - check screen recording permissions');
+            screenshot = null;
+          } else {
+            console.log('📸 Available windows:', sources.map(s => s.name));
 
         // Filter out Denker windows and system windows
         const filteredSources = sources.filter(source => {
           const name = source.name.toLowerCase();
-          return !name.includes('denker') && 
-                 !name.includes('electron') && 
-                 !name.includes('cursor') &&
-                 !name.includes('system') &&
-                 !name.includes('finder') &&
-                 !name.includes('terminal');
+          return !name.includes('denker') 
         });
 
-        if (filteredSources.length > 0) {
-          // Get the most recently active window
-          const activeWindow = filteredSources[0];
-          console.log('📸 Selected window:', activeWindow.name);
-          screenshot = activeWindow.thumbnail.toDataURL();
-          console.log('📸 Screenshot captured successfully');
-        } else {
-          console.log('⚠️ No suitable window found for capture');
+            if (filteredSources.length > 0) {
+              // Get the most recently active window
+              const activeWindow = filteredSources[0];
+              console.log('📸 Selected window:', activeWindow.name);
+              
+              // Check if thumbnail exists and has size
+              console.log('📸 Thumbnail info:', {
+                hasThumbnail: !!activeWindow.thumbnail,
+                thumbnailSize: activeWindow.thumbnail ? {
+                  width: activeWindow.thumbnail.getSize().width,
+                  height: activeWindow.thumbnail.getSize().height
+                } : null,
+                isEmpty: activeWindow.thumbnail ? activeWindow.thumbnail.isEmpty() : true
+              });
+              
+              if (activeWindow.thumbnail && !activeWindow.thumbnail.isEmpty()) {
+                screenshot = activeWindow.thumbnail.toDataURL();
+                console.log('📸 Screenshot captured successfully:', {
+                  hasScreenshot: !!screenshot,
+                  screenshotType: typeof screenshot,
+                  screenshotLength: screenshot?.length,
+                  screenshotPreview: screenshot?.substring(0, 100) + '...',
+                  dataUrlValid: screenshot?.includes('base64,') && screenshot?.length > 50
+                });
+              } else {
+                console.log('❌ Thumbnail is empty or invalid');
+                screenshot = null;
+              }
+            } else {
+              console.log('⚠️ No suitable window found for capture');
+              screenshot = null;
+            }
+          }
         }
       } catch (error) {
         console.error('❌ Screenshot capture error:', error);
@@ -410,12 +1150,62 @@ function registerGlobalShortcut() {
 
       // Call intention agent API in background
       console.log('🌐 Calling intention agent API...');
+      
+      let screenshotData = null;
+      let screenshotMimeType = null;
+
+      console.log('🔍 Screenshot debugging:', {
+        hasScreenshot: !!screenshot,
+        screenshotType: typeof screenshot,
+        screenshotLength: screenshot?.length,
+        screenshotPreview: screenshot?.substring(0, 50) + '...'
+      });
+
+      if (screenshot) {
+        console.log('🎯 Processing screenshot data URL...');
+        // The screenshot is a data URL like "data:image/png;base64,iVBORw0K..."
+        const parts = screenshot.match(/^data:(.*);base64,(.*)$/);
+        console.log('🔍 Data URL parsing result:', {
+          hasParts: !!parts,
+          partsLength: parts?.length,
+          mimeType: parts?.[1],
+          base64DataLength: parts?.[2]?.length
+        });
+        
+        if (parts && parts.length === 3) {
+          screenshotMimeType = parts[1]; // e.g., "image/png"
+          screenshotData = parts[2];     // The raw base64 data
+          console.log('✅ Screenshot data extracted successfully:', {
+            mimeType: screenshotMimeType,
+            dataLength: screenshotData.length
+          });
+        } else {
+          console.warn('⚠️ Failed to parse data URL, using fallback');
+          // Fallback for safety, though it should be a data URL
+          screenshotData = screenshot;
+          screenshotMimeType = 'image/png'; // Assume PNG if format is unknown
+        }
+      } else {
+        console.log('❌ No screenshot data available for API request');
+      }
+
       const apiRequest = {
         query_id: `query_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`,
         text: clipboardText,
-        screenshot: screenshot,
+        screenshot: screenshotData,
+        screenshot_mime_type: screenshotMimeType,
         mode: mode
       };
+
+      // ADDED: Detailed logging before sending
+      console.log('📦 Preparing to send API request:', {
+        query_id: apiRequest.query_id,
+        mode: apiRequest.mode,
+        textLength: apiRequest.text?.length,
+        hasScreenshot: !!apiRequest.screenshot,
+        screenshotLength: apiRequest.screenshot?.length,
+        screenshotMimeType: apiRequest.screenshot_mime_type
+      });
 
       try {
         console.log('🔄 Starting API request...');
@@ -425,7 +1215,7 @@ function registerGlobalShortcut() {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${API_KEY}`
+            ...(API_KEY ? { 'Authorization': `Bearer ${API_KEY}` } : {})
           },
           body: JSON.stringify(apiRequest),
           signal: AbortSignal.timeout(30000)
@@ -470,11 +1260,25 @@ function registerGlobalShortcut() {
         }
       }
 
-    } catch (error) {
-      console.error('❌ Error in shortcut handler:', error);
-      dialog.showErrorBox('Error', `Failed to process capture: ${error.message}`);
+      } catch (error) {
+        console.error('❌ Error in shortcut handler:', error);
+        dialog.showErrorBox('Error', `Failed to process capture: ${error.message}`);
+      }
+    });
+
+    if (success) {
+      console.log('✅ Global shortcut CommandOrControl+Shift+D registered successfully!');
+    } else {
+      console.error('❌ Failed to register global shortcut CommandOrControl+Shift+D');
+      console.log('🔍 Checking all currently registered shortcuts:');
+      globalShortcut.getRegisteredAccelerators().forEach(shortcut => {
+        console.log(`  - ${shortcut}`);
+      });
     }
-  });
+  } catch (error) {
+    console.error('❌ Error registering global shortcut:', error);
+    dialog.showErrorBox('Shortcut Registration Error', `Failed to register global shortcut: ${error.message}`);
+  }
 }
 
 // Create or reuse subwindow with data
@@ -570,7 +1374,7 @@ async function createSubWindowWithData(captureData) {
 
     // Open DevTools in development mode
     if (isDev) {
-      subWindow.webTools.openDevTools({ mode: 'detach' });
+      subWindow.webContents.openDevTools({ mode: 'detach' });
     }
 
     // Handle window close
@@ -720,45 +1524,11 @@ function createMainWindow() {
   });
 }
 
-// Clean up before quitting
-app.on('before-quit', () => {
-  console.log('Before quit event received - setting app.isQuitting to true');
-  // Mark that we're quitting
-  app.isQuitting = true;
-  
-  // Clean up resources
-  if (clipboardMonitorInterval) {
-    clearInterval(clipboardMonitorInterval);
-    console.log('Cleared clipboard monitor interval');
-  }
-  
-  // Clean up tray if it exists
-  if (tray) {
-    tray.destroy();
-    tray = null;
-    console.log('Destroyed tray');
-  }
-  
-  // Ensure we're forcefully quitting
-  setTimeout(() => {
-    console.log('Force exit after timeout');
-    process.exit(0);
-  }, 1000);
-});
 
-// Add additional quit handler to ensure app closes
-app.on('quit', () => {
-  console.log('App quit event received');
-  // Force quit as a last resort
-  process.exit(0);
-});
 
-// Force quit when all windows are closed on macOS
-app.on('window-all-closed', () => {
-  console.log('All windows closed, quitting app');
-  app.isQuitting = true;
-  app.quit();
-});
+
+
+
 
 // IPC handlers
 ipcMain.handle('minimize-main-window', () => {
@@ -903,8 +1673,7 @@ function createTray() {
       accelerator: 'CmdOrCtrl+Q',
       click: () => {
         console.log('Quit menu item clicked');
-        app.isQuitting = true;
-        app.quit();
+        cleanupAndQuit(); // Use the consolidated quit method
       } 
     }
   ]);
@@ -965,28 +1734,7 @@ function setupAppMenu() {
           accelerator: 'CmdOrCtrl+Q',
           click: () => {
             console.log('Quit menu item clicked');
-            // Force aggressive quit
-            app.isQuitting = true;
-            
-            // Destroy windows explicitly
-            if (subWindow) {
-              subWindow.destroy();
-              subWindow = null;
-            }
-            
-            if (mainWindow) {
-              mainWindow.removeAllListeners('close');
-              mainWindow.destroy();
-              mainWindow = null;
-            }
-            
-            // Force app to quit
-            app.quit();
-            
-            // As a last resort, exit the process after a short delay
-            setTimeout(() => {
-              process.exit(0);
-            }, 500);
+            cleanupAndQuit(); // Use the consolidated quit method
           } 
         }
       ]
@@ -1243,6 +1991,108 @@ function forwardAuthDataToRenderer(params) { // This function seems unused or pa
 // Key for storing auth tokens in electron-store
 const AUTH_TOKEN_KEY = 'authTokens';
 
+// Background token refresh system
+let tokenRefreshInterval = null;
+let isRefreshingToken = false;
+
+// Helper function to check if token needs refresh (15 minutes before expiry)
+function shouldRefreshToken(tokenData) {
+  if (!tokenData || !tokenData.accessToken || !tokenData.refreshToken) {
+    return false;
+  }
+  
+  const bufferSeconds = 15 * 60; // 15 minutes buffer
+  const expiresAt = tokenData.receivedAt + (tokenData.expiresIn * 1000) - (bufferSeconds * 1000);
+  return Date.now() > expiresAt;
+}
+
+// Background token refresh function
+async function performBackgroundTokenRefresh() {
+  if (isRefreshingToken) {
+    console.log('[Background Refresh] Token refresh already in progress, skipping');
+    return;
+  }
+  
+  const tokenData = store.get(AUTH_TOKEN_KEY);
+  if (!shouldRefreshToken(tokenData)) {
+    return; // No refresh needed
+  }
+  
+  console.log('[Background Refresh] Starting proactive token refresh');
+  isRefreshingToken = true;
+  
+  try {
+    const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+    const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+    const tokenUrl = `https://${auth0Domain}/oauth/token`;
+
+    const refreshParams = new URLSearchParams({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      refresh_token: tokenData.refreshToken,
+    });
+
+    console.log('[Background Refresh] Requesting new token from Auth0');
+    const response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: refreshParams,
+    });
+
+    const newTokens = await response.json();
+
+    if (!response.ok) {
+      console.error('[Background Refresh] Token refresh failed:', newTokens);
+      // Don't clear tokens on background refresh failure - let the user-initiated refresh handle it
+      return;
+    }
+
+    console.log('[Background Refresh] Token refresh successful');
+    const newTokenData = {
+      accessToken: newTokens.access_token,
+      idToken: newTokens.id_token,
+      refreshToken: newTokens.refresh_token || tokenData.refreshToken,
+      expiresIn: newTokens.expires_in,
+      scope: newTokens.scope || tokenData.scope,
+      receivedAt: Date.now(),
+    };
+    
+    store.set(AUTH_TOKEN_KEY, newTokenData);
+    console.log('[Background Refresh] New tokens stored successfully');
+    
+    // Notify renderer of successful background refresh
+    if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('token-refreshed', { success: true });
+    }
+    
+  } catch (error) {
+    console.error('[Background Refresh] Error during background token refresh:', error);
+    // Don't clear tokens on background refresh error
+  } finally {
+    isRefreshingToken = false;
+  }
+}
+
+// Start background token refresh timer
+function startBackgroundTokenRefresh() {
+  if (tokenRefreshInterval) {
+    clearInterval(tokenRefreshInterval);
+  }
+  
+  // Check every 5 minutes
+  tokenRefreshInterval = setInterval(performBackgroundTokenRefresh, 5 * 60 * 1000);
+  console.log('[Background Refresh] Background token refresh timer started (5 minute intervals)');
+}
+
+// Stop background token refresh timer
+function stopBackgroundTokenRefresh() {
+  if (tokenRefreshInterval) {
+    clearInterval(tokenRefreshInterval);
+    tokenRefreshInterval = null;
+    console.log('[Background Refresh] Background token refresh timer stopped');
+  }
+}
+
 // Define setupAuth0Authentication function
 function setupAuth0Authentication() {
   console.log('🔐 Setting up Auth0 authentication listeners...');
@@ -1278,12 +2128,11 @@ function setupAuth0Authentication() {
   }
   
   // Register IPC listener for renderer to trigger system browser login
-  // This should remain as is
-  ipcMain.handle('login', async () => { // Changed to handle, can be async if needed
+  ipcMain.handle('login', async () => {
     console.log('🔓 Received login request from renderer');
     try {
-      openSystemBrowserForAuth(); // Call the function to open browser with PKCE
-      return { success: true }; // Indicate the process started
+      openSystemBrowserForAuth(); 
+      return { success: true }; 
     } catch (error) {
        console.error("❌ Error initiating login:", error);
        return { success: false, error: error.message || 'Failed to start login process.' };
@@ -1291,10 +2140,166 @@ function setupAuth0Authentication() {
   });
   console.log("🔐 Auth0 login request listener ('login') ready.");
 
-  // ... other potential handlers like 'logout', 'getAccessToken', 'getUserInfo' should be here ...
-  // Ensure ipcMain.handle('logout', ...) is correctly defined
-  // Ensure ipcMain.handle('getAccessToken', ...) is correctly defined
-  // Ensure ipcMain.handle('getUserInfo', ...) is correctly defined
+  // IPC Handler for getting the access token
+  ipcMain.handle('get-access-token', async () => {
+    console.log('[IPC] Handling get-access-token');
+    const tokenData = store.get(AUTH_TOKEN_KEY);
+
+    if (!tokenData || !tokenData.accessToken) {
+      console.log('[IPC] No access token data found in store.');
+      return null;
+    }
+
+    // Check for token expiration (with a 60-second buffer for immediate use)
+    const bufferSeconds = 60;
+    const expiresAt = tokenData.receivedAt + (tokenData.expiresIn * 1000) - (bufferSeconds * 1000);
+    const isTokenExpired = Date.now() > expiresAt;
+
+    if (isTokenExpired) {
+      console.log('[IPC] Access token expired or nearing expiration. Attempting immediate refresh.');
+      if (tokenData.refreshToken) {
+        try {
+          const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+          const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+          const tokenUrl = `https://${auth0Domain}/oauth/token`;
+
+          const refreshParams = new URLSearchParams({
+            grant_type: 'refresh_token',
+            client_id: clientId,
+            refresh_token: tokenData.refreshToken,
+          });
+
+          console.log(`[IPC] Requesting new token from ${tokenUrl} using refresh token.`);
+          const response = await fetch(tokenUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: refreshParams,
+          });
+
+          const newTokens = await response.json();
+
+          if (!response.ok) {
+            console.error('[IPC] Refresh token exchange failed:', newTokens);
+            // Clear stored tokens if refresh fails, forcing re-login
+            store.delete(AUTH_TOKEN_KEY);
+            stopBackgroundTokenRefresh(); // Stop background refresh when tokens are cleared
+            return null;
+          }
+
+          console.log('[IPC] Refresh token exchange successful. New tokens received.');
+          const newTokenData = {
+            accessToken: newTokens.access_token,
+            idToken: newTokens.id_token,
+            refreshToken: newTokens.refresh_token || tokenData.refreshToken, // Use new refresh token if provided, else keep old
+            expiresIn: newTokens.expires_in,
+            scope: newTokens.scope || tokenData.scope,
+            receivedAt: Date.now(),
+          };
+          store.set(AUTH_TOKEN_KEY, newTokenData);
+          console.log('[IPC] New tokens stored.');
+          
+          // Ensure background refresh is running with new tokens
+          startBackgroundTokenRefresh();
+          
+          return newTokenData.accessToken;
+        } catch (error) {
+          console.error('[IPC] Error during token refresh:', error);
+          store.delete(AUTH_TOKEN_KEY); // Clear tokens on error
+          stopBackgroundTokenRefresh(); // Stop background refresh when tokens are cleared
+          return null;
+        }
+      } else {
+        console.log('[IPC] Token expired, but no refresh token available. Clearing tokens.');
+        store.delete(AUTH_TOKEN_KEY); // No refresh token, so user must re-authenticate
+        stopBackgroundTokenRefresh(); // Stop background refresh when tokens are cleared
+        return null;
+      }
+    }
+
+    console.log('[IPC] Existing access token is valid.');
+    
+    // Ensure background refresh is running for valid tokens
+    if (!tokenRefreshInterval) {
+      startBackgroundTokenRefresh();
+    }
+    
+    return tokenData.accessToken;
+  });
+  console.log("🔐 Auth0 get-access-token listener ready with refresh logic.");
+
+  // IPC Handler for getting user information
+  ipcMain.handle('get-user-info', async () => {
+    console.log('[IPC] Handling get-user-info');
+    const tokenData = store.get(AUTH_TOKEN_KEY);
+    if (tokenData && tokenData.accessToken) {
+      try {
+        const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+        const userInfoUrl = `https://${auth0Domain}/userinfo`;
+        console.log(`[IPC] Fetching user info from ${userInfoUrl}`);
+        const response = await fetch(userInfoUrl, {
+          headers: {
+            'Authorization': `Bearer ${tokenData.accessToken}`,
+          },
+        });
+        if (!response.ok) {
+          const errorData = await response.text();
+          console.error(`[IPC] Error fetching user info: ${response.status}`, errorData);
+          throw new Error(`Failed to fetch user info: ${response.status}`);
+        }
+        const userInfo = await response.json();
+        console.log('[IPC] User info fetched successfully:', userInfo ? Object.keys(userInfo) : 'null');
+        return userInfo;
+      } catch (error) {
+        console.error('[IPC] Error in get-user-info handler:', error);
+        return null;
+      }
+    }
+    console.log('[IPC] No access token available to fetch user info.');
+    return null;
+  });
+  console.log("🔐 Auth0 get-user-info listener ready.");
+
+  // IPC Handler for logout
+  ipcMain.handle('logout', async () => {
+    console.log('[IPC] Handling logout');
+    try {
+      // Clear local tokens
+      store.delete(AUTH_TOKEN_KEY);
+      console.log('[IPC] Local tokens cleared.');
+      
+      // Stop background token refresh
+      stopBackgroundTokenRefresh();
+
+      // Open Auth0 logout URL in system browser
+      const auth0Domain = RENDERER_ENV_VARS.VITE_AUTH0_DOMAIN;
+      const clientId = RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID;
+      // The returnTo URL should be a URL that Auth0 allows.
+      // For production, it might be where your auth-server.js can show a "logged out" page.
+      // For dev, it might be the app's base URL or a specific logout confirmation page.
+      const returnToDev = 'http://localhost:5173/login'; // Example for dev
+      const returnToProd = `http://localhost:8123/logout-success`; // For production server
+      
+      const logoutUrl = new URL(`https://${auth0Domain}/v2/logout`);
+      logoutUrl.searchParams.append('client_id', clientId);
+      logoutUrl.searchParams.append('returnTo', isDev ? returnToDev : returnToProd);
+
+      console.log(`[IPC] Opening logout URL: ${logoutUrl.toString()}`);
+      await shell.openExternal(logoutUrl.toString());
+      
+      // Notify renderer that logout process has been initiated.
+      // The AuthContext will listen for 'auth-logged-out' which it should trigger itself
+      // or this handler could send it. For now, AuthContext handles its state.
+      if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('auth-logged-out'); // Explicitly send logged out event
+      }
+      
+      return { success: true };
+    } catch (error) {
+      console.error('[IPC] Error during logout:', error);
+      return { success: false, error: error.message || 'Logout failed' };
+    }
+  });
+  console.log("🔐 Auth0 logout listener ready.");
 }
 
 const crypto = require('crypto'); // Add crypto for PKCE
@@ -1422,6 +2427,9 @@ async function handleAuth0Callback(params) { // Make async
       };
       store.set(AUTH_TOKEN_KEY, tokenDataToStore);
       console.log('[AUTH] Tokens stored securely.');
+      
+      // Start background token refresh for new tokens
+      startBackgroundTokenRefresh();
 
       // --- 6. Notify Renderer of Success ---
       ensureMainWindow(() => { // Ensure window exists before sending IPC
@@ -1495,3 +2503,107 @@ function openSystemBrowserForAuth() {
      }
   });
 }
+
+console.log("🐍 IPC handler 'request-restart-local-backend' (implemented) registered.");
+
+// Global variable to track backend readiness
+let isBackendReady = false;
+
+// Function to check if local backend is ready
+async function checkBackendHealth() {
+  const maxAttempts = 20; // Reduced to 20 attempts since we're starting later
+  const attemptInterval = 2000; // Increased to 2 seconds between attempts
+  
+  // Try URLs in order of likelihood to work
+  const healthUrls = [
+    { host: '127.0.0.1', port: 9001, path: '/health' },
+    { host: 'localhost', port: 9001, path: '/health' }
+  ];
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    console.log(`[electron.js] Checking backend health (attempt ${attempt}/${maxAttempts})...`);
+    
+    // Try each URL
+    for (const urlConfig of healthUrls) {
+      try {
+        const url = `http://${urlConfig.host}:${urlConfig.port}${urlConfig.path}`;
+        console.log(`[electron.js] Trying health check at: ${url}`);
+        
+        const isHealthy = await new Promise((resolve) => {
+          const request = http.request({
+            hostname: urlConfig.host,
+            port: urlConfig.port,
+            path: urlConfig.path,
+            method: 'GET',
+            timeout: 5000,
+            headers: {
+              'Accept': 'application/json',
+              'User-Agent': 'Denker-Electron-HealthCheck'
+            }
+          }, (response) => {
+            let data = '';
+            response.on('data', (chunk) => {
+              data += chunk;
+            });
+            response.on('end', () => {
+              if (response.statusCode === 200) {
+                console.log(`[electron.js] ✅ Backend is ready at ${url}! (attempt ${attempt}) Response: ${data.substring(0, 100)}`);
+                resolve(true);
+              } else {
+                console.log(`[electron.js] Health check at ${url} returned status: ${response.statusCode} ${response.statusMessage}`);
+                resolve(false);
+              }
+            });
+          });
+          
+          request.on('error', (error) => {
+            console.log(`[electron.js] Health check failed at ${url}: ${error.message}`);
+            resolve(false);
+          });
+          
+          request.on('timeout', () => {
+            console.log(`[electron.js] Health check timeout at ${url}`);
+            request.destroy();
+            resolve(false);
+          });
+          
+          request.end();
+        });
+        
+        if (isHealthy) {
+          isBackendReady = true;
+          
+          // Notify the frontend that backend is ready
+          if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('backend-ready');
+          }
+          
+          return true;
+        }
+      } catch (error) {
+        console.log(`[electron.js] Health check error: ${error.message}`);
+        continue; // Try next URL
+      }
+    }
+    
+    // Wait before next attempt if all URLs failed
+    if (attempt < maxAttempts) {
+      console.log(`[electron.js] All health check URLs failed, waiting ${attemptInterval}ms before retry...`);
+      await new Promise(resolve => setTimeout(resolve, attemptInterval));
+    }
+  }
+  
+  console.error(`[electron.js] ❌ Backend failed to become ready after ${maxAttempts} attempts`);
+  
+  // Notify frontend of backend failure
+  if (mainWindow && mainWindow.webContents && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('backend-failed', 'Local backend failed to respond to health checks within expected time');
+  }
+  
+  return false;
+}
+
+// IPC handler to check if backend is ready
+ipcMain.handle('is-backend-ready', () => {
+  return isBackendReady;
+});

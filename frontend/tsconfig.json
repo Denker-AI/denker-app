@@ -21,5 +21,8 @@
     }
   },
   "include": ["src"],
+  "files": [
+    "src/electron.d.ts"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 } 

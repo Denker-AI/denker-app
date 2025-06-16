@@ -5,6 +5,15 @@
  * Supports both RESTful API calls and WebSocket connections for real-time updates.
  */
 
+import { getLocalApiUrl } from '../services/apiService';
+import { getUserInfoCached } from './user-info-cache';
+import { getCachedAccessToken } from './token-cache';
+
+// Default API endpoint
+const BASE_URL = getLocalApiUrl() || 'http://localhost:9001/api/v1';
+const COORDINATOR_ENDPOINT = `${BASE_URL}/agents/coordinator/mcp-agent`;
+const LOCAL_LOGIN_ENDPOINT = `${BASE_URL}/agents/auth/local-login`;
+
 // Generate a unique client ID for this session
 const generateClientId = () => {
   return 'client_' + Math.random().toString(36).substring(2, 15);
@@ -22,23 +31,15 @@ const generateUUID = () => {
 // Default client ID for this session
 const DEFAULT_CLIENT_ID = generateClientId();
 
-// API endpoint configurations using Vite env variables 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8001/api/v1';
-// Get base URL without /api/v1 suffix for coordinator endpoints
-const BASE_URL = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
-// Updated to use only the FastAPI versioned endpoint
-const COORDINATOR_ENDPOINT = `${API_BASE_URL}/agents/coordinator/mcp-agent`;
-
 // WebSocket URL - dynamically determine based on current hostname
 const getWebSocketBaseUrl = () => {
   // If environment variable exists, use it
-  if (import.meta.env.VITE_WS_URL) {
-    return import.meta.env.VITE_WS_URL;
+  if (import.meta.env.VITE_LOCAL_WS_URL) {
+    return import.meta.env.VITE_LOCAL_WS_URL;
   }
-  
   // Otherwise use current hostname
   const hostname = window.location.hostname || 'localhost';
-  return `ws://${hostname}:8001`;
+  return `ws://${hostname}:9001`;
 };
 
 const WEBSOCKET_BASE_URL = getWebSocketBaseUrl();
@@ -46,11 +47,10 @@ const WEBSOCKET_BASE_URL = getWebSocketBaseUrl();
 const WEBSOCKET_ENDPOINT = `${WEBSOCKET_BASE_URL}/api/v1/agents/ws/mcp-agent`;
 
 // Health check URL - should point to FastAPI health endpoint
-const HEALTH_CHECK_URL = `${API_BASE_URL}/health`;
+const HEALTH_CHECK_URL = `${BASE_URL}/health`;
 
 // Debug API configuration - log detailed connection info
 console.log('MCP Agent API configuration:', {
-  API_BASE_URL,
   BASE_URL,
   COORDINATOR_ENDPOINT,
   WEBSOCKET_BASE_URL,
@@ -63,6 +63,10 @@ let isApiInitialized = false;
 
 // Debug flag to enable REST-only mode
 let forceRestOnlyMode = false; // Enable WebSocket communication
+
+// WebSocket retry settings
+const WEBSOCKET_RETRY_DELAY = 1000; // 1 second
+const WEBSOCKET_MAX_RETRIES = 3;
 
 /**
  * MCP Agent Client class for interacting with the coordinator
@@ -80,8 +84,33 @@ class MCPAgentClient {
       onError: options.onError || (() => {}),
     };
     
+    // Default not logged in
+    this.isLoggedIn = false;
+    this.userId = null;
+    this.userToken = null;
+    
     // Mark as initialized immediately - we'll check backend availability on demand
     this._initialized = true;
+    
+    // Auto-login for development mode
+    if (import.meta.env.DEV) {
+      this._devModeLogin();
+    }
+  }
+  
+  /**
+   * Development mode auto-login
+   */
+  async _devModeLogin() {
+    try {
+      console.log('[MCPAgentClient] Using development mode auto-login');
+      const result = await this.login('dev-user-id', 'dev-mode-token');
+      console.log('[MCPAgentClient] Development mode login result:', result);
+      return result;
+    } catch (error) {
+      console.warn('[MCPAgentClient] Development mode login failed:', error);
+      return false;
+    }
   }
   
   /**
@@ -93,9 +122,94 @@ class MCPAgentClient {
       initialized: this.isInitialized,
       restOnlyMode: this.forceRestOnlyMode,
       clientId: this.clientId,
+      isLoggedIn: this.isLoggedIn,
+      userId: this.userId ? this.userId.substring(0, 8) + '...' : null,
     };
     
     return status;
+  }
+  
+  /**
+   * Login to the local backend
+   * @param {string} userId - User ID
+   * @param {string} token - Authentication token
+   * @returns {Promise<boolean>} - Whether login was successful
+   */
+  async login(userId, token) {
+    try {
+      console.log(`[MCPAgentClient] Logging in with user ID: ${userId}`);
+      
+      // For development mode, provide a simplified experience that avoids backend errors
+      if (import.meta.env.DEV && (!token || token === 'dev-mode-token')) {
+        console.log('[MCPAgentClient] Using dev mode simplified login');
+        this.isLoggedIn = true;
+        this.userId = userId || 'dev-user-id';
+        this.userToken = token || 'dev-mode-token';
+        return true;
+      }
+      
+      const response = await fetch(LOCAL_LOGIN_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          token: token
+        }),
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        // Try to parse error from backend if possible
+        let errorMsg = `Login failed: ${response.status} ${response.statusText}`;
+        try {
+            const errorData = await response.json();
+            errorMsg = errorData.detail || errorData.message || errorMsg;
+        } catch (e) { /* ignore parsing error */ }
+        
+        // Don't throw error for common startup scenarios
+        if (response.status === 503 || response.status === 502 || response.status === 0) {
+          console.warn(`[MCPAgentClient] Backend not ready yet (${response.status}), this is normal during startup`);
+          // For development, still allow operations
+          if (import.meta.env.DEV) {
+            console.log('[MCPAgentClient] Using dev mode login fallback for startup timing');
+            this.isLoggedIn = true;
+            this.userId = userId || 'dev-user-id';
+            this.userToken = token || 'dev-mode-token';
+            return true;
+          }
+          return false; // Return false instead of throwing error
+        }
+        
+        throw new Error(errorMsg);
+      }
+      
+      // If response.ok is true, consider the login successful at this point
+      // The actual content of 'result' can be used for logging or further details if needed
+      const result = await response.json();
+      // console.log('[MCPAgentClient] Login API call successful, response data:', result);
+
+        this.isLoggedIn = true;
+        this.userId = userId;
+        this.userToken = token;
+      console.log('[MCPAgentClient] Successfully logged in to local backend and updated client state.');
+        return true;
+    } catch (error) {
+      console.error('Error logging in to local backend:', error);
+      
+      // For development, still allow operations
+      if (import.meta.env.DEV) {
+        console.log('[MCPAgentClient] Using dev mode login fallback after error');
+        this.isLoggedIn = true;
+        this.userId = userId || 'dev-user-id';
+        this.userToken = token || 'dev-mode-token';
+        return true;
+      }
+      
+      this.isLoggedIn = false;
+      return false;
+    }
   }
   
   /**
@@ -105,6 +219,38 @@ class MCPAgentClient {
    * @returns {Promise<object>} - Promise that resolves with the response
    */
   async processRequest(requestData, options = {}) {
+    // Check if logged in first
+    if (!this.isLoggedIn) {
+      try {
+        // Auto-login with electron credentials if available
+        if (window.electron?.getAccessToken) {
+          try {
+            const token = await getCachedAccessToken(); // Use cached token system
+            const user = await getUserInfoCached(); // Use cached user info to prevent Auth0 calls
+            if (token && user && (user.id || user.sub)) {
+              const userId = user.id || user.sub;
+              await this.login(userId, token);
+            }
+          } catch (error) {
+            console.warn('Auto-login failed:', error);
+            // For development mode, still allow operations with dev credentials
+            if (import.meta.env.DEV) {
+              await this._devModeLogin();
+            }
+          }
+        } else if (import.meta.env.DEV) {
+          // Development mode without electron
+          await this._devModeLogin();
+        }
+      } catch (loginError) {
+        console.error('[MCPAgentClient] Error during login attempt:', loginError);
+        if (!import.meta.env.DEV) {
+          throw new Error(`Authentication required: ${loginError.message}`);
+        }
+        // In dev mode, continue anyway
+      }
+    }
+
     // If requestData is a string, treat it as a direct query from input box
     if (typeof requestData === 'string') {
       requestData = {
@@ -210,12 +356,18 @@ class MCPAgentClient {
       
       console.log(`Initiating WebSocket process via HTTP POST ${requestId}:`, payload);
       
+      // Create headers
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+      
       // Make the initial request to the coordinator endpoint to kick off the process
       const response = await fetch(`${COORDINATOR_ENDPOINT}`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(10000), // 10 second timeout
+        credentials: 'include', // Include cookies in the request
       });
       
       if (!response.ok) {
@@ -313,14 +465,18 @@ class MCPAgentClient {
       
       console.log(`Sending REST request ${requestId}:`, payload);
       
+      // Create headers
+      const headers = {
+        'Content-Type': 'application/json',
+      };
+      
       // Send the request to the API
       const response = await fetch(`${COORDINATOR_ENDPOINT}`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(60000), // 60 second timeout
+        credentials: 'include', // Include cookies in the request
       });
       
       if (!response.ok) {

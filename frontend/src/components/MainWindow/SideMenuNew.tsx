@@ -638,15 +638,20 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
     // Validate and upload files
     const validFiles = file.validateFiles(fileArray);
     if (validFiles.length > 0) {
-      file.uploadFiles(validFiles).catch(error => {
-        console.error('Error uploading files:', error);
-        setUploadStatus({
-          isUploading: false,
-          message: `Upload failed: ${error.message || 'Unknown error'}`,
-          severity: 'error',
-          autoHideDuration: 5000
+      file.uploadFiles(validFiles)
+        .then(() => {
+          console.log('[SideMenuNew] Direct file upload successful, refreshing file list.');
+          file.loadFiles(); // Refresh file list
+        })
+        .catch(error => {
+          console.error('Error uploading files:', error);
+          setUploadStatus({
+            isUploading: false,
+            message: `Upload failed: ${error.message || 'Unknown error'}`,
+            severity: 'error',
+            autoHideDuration: 5000
+          });
         });
-      });
     } else {
       // All files were invalid
       setUploadStatus({
@@ -727,7 +732,7 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
                 width: 40,
                 height: 40, 
                 mr: 1.5,
-                bgcolor: theme.palette.grey[700],
+                bgcolor: theme.palette.primary.main,
                 fontSize: '1rem'
               }}
             />

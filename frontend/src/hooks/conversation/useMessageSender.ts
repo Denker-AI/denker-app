@@ -190,7 +190,7 @@ export const useMessageSender = () => {
             // --- MODIFIED: Use uploadFileWithRetry and pass IDs --- 
             const currentQueryId = activeQueryId; // Get the current active query ID
             console.log(`Uploading file ${file.name} for message ${userMessageId} with queryId ${currentQueryId}`);
-            const uploadResponse = await api.uploadFileWithRetry(file, currentQueryId, userMessageId);
+            const uploadResponse = await api.uploadFileWithRetry(file, { query_id: currentQueryId ?? undefined, message_id: userMessageId });
             // --- END MODIFICATION ---
             const fileData = uploadResponse;
 
@@ -241,12 +241,21 @@ export const useMessageSender = () => {
         // Wait for all uploads and filter out failed ones
         finalFileIds = (await Promise.all(uploadPromises)).filter(Boolean) as string[];
         
-        // Save the message to the database with file IDs - don't await this to avoid blocking the UI
-        saveMessageToDatabase(
+        // Save the message to the database with file IDs
+        const metadataForSave = finalFileIds.length > 0 ? { file_ids: finalFileIds } : {};
+        console.log('🔴 [useMessageSender] Calling saveMessageToDatabase (with files):', {
+          convId,
+          userMessageId,
+          content, // User's text input
+          role: 'user',
+          metadata: metadataForSave
+        });
+        await saveMessageToDatabase(
           convId, 
+          userMessageId,
           content, 
           'user', 
-          finalFileIds.length > 0 ? { file_ids: finalFileIds } : {}
+          metadataForSave
         ).catch(err => console.error('Database persistence failed, but UI is updated:', err));
       } else {
         // If no files, just add the text message
@@ -257,8 +266,15 @@ export const useMessageSender = () => {
           timestamp: currentTime
         });
 
-        // Save the message to the database - don't await this to avoid blocking the UI
-        saveMessageToDatabase(convId, content, 'user')
+        // Save the message to the database
+        console.log('🔴 [useMessageSender] Calling saveMessageToDatabase (no files):', {
+          convId,
+          userMessageId,
+          content, // User's text input
+          role: 'user',
+          metadata: {} // Explicitly empty for this path
+        });
+        await saveMessageToDatabase(convId, userMessageId, content, 'user') // metadata defaults to {}
           .catch(err => console.error('Database persistence failed, but UI is updated:', err));
 
         // Check if this is the first message and update title if needed

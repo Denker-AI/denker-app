@@ -130,6 +130,7 @@ class VertexAIService:
         self,
         text: str,
         image_base64: Optional[str] = None,
+        image_mime_type: Optional[str] = None,
         max_tokens: int = 1024,
         temperature: float = 0.4
     ) -> Optional[str]:
@@ -160,7 +161,7 @@ class VertexAIService:
                         # Create image part
                         image_part = Part.from_data(
                             image_data,
-                            mime_type="image/png"
+                            mime_type=image_mime_type or "image/png"
                         )
                         content_parts.append(image_part)
                     except Exception as img_error:

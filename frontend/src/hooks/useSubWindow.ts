@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import type { CaptureData, Option, IntentionResponse } from '../types/types';
 
 export const useSubWindow = () => {
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true); // Start with loading true for initialization
+  const [isAnalyzing, setIsAnalyzing] = useState(true); // Start analyzing immediately
   const [error, setError] = useState<string | null>(null);
   const [options, setOptions] = useState<Option[]>([]);
   const [captureData, setCaptureData] = useState<CaptureData | null>(null);
@@ -15,18 +16,18 @@ export const useSubWindow = () => {
 
     // Listen for API loading state changes
     if (window.electron && typeof window.electron.onApiLoadingChange === 'function') {
-      unsubscribeLoading = window.electron.onApiLoadingChange((isLoading) => {
-        console.log('🔄 API loading state changed:', isLoading);
-        setIsLoading(isLoading);
+      unsubscribeLoading = window.electron.onApiLoadingChange((isApiLoading) => {
+        console.log('🔄 API loading state changed:', isApiLoading);
+        setIsAnalyzing(isApiLoading);
+        setIsLoading(isApiLoading);
         
         // Clear error when starting a new request
-        if (isLoading) {
+        if (isApiLoading) {
           setError(null);
         }
       });
     } else {
       console.error('❌ window.electron.onApiLoadingChange is not available when useSubWindow mounted.');
-      // Optionally, set an error state here or retry later
     }
     
     // Handle initial capture data
@@ -38,6 +39,8 @@ export const useSubWindow = () => {
         if (!data) {
           console.error('❌ No capture data received');
           setError('No capture data received from main process');
+          setIsAnalyzing(false);
+          setIsLoading(false);
           return;
         }
 
@@ -56,6 +59,8 @@ export const useSubWindow = () => {
       } catch (err) {
         console.error('❌ Error receiving capture data:', err);
         setError(err instanceof Error ? err.message : 'An error occurred');
+        setIsAnalyzing(false);
+        setIsLoading(false);
       }
     };
 
@@ -68,6 +73,8 @@ export const useSubWindow = () => {
         if (!response) {
           console.error('❌ No API response received');
           setError('No API response received');
+          setIsAnalyzing(false);
+          setIsLoading(false);
           return;
         }
 
@@ -77,6 +84,8 @@ export const useSubWindow = () => {
         if (response.error) {
           console.error('❌ API returned error:', response.error);
           setError(response.error);
+          setIsAnalyzing(false);
+          setIsLoading(false);
           return;
         }
         
@@ -89,10 +98,16 @@ export const useSubWindow = () => {
           console.error('❌ Invalid options in API response');
           setError('Invalid options received from API');
         }
+        
+        // Analysis complete
+        setIsAnalyzing(false);
+        setIsLoading(false);
 
       } catch (err) {
         console.error('❌ Error receiving API response:', err);
         setError(err instanceof Error ? err.message : 'An error occurred');
+        setIsAnalyzing(false);
+        setIsLoading(false);
       }
     };
 
@@ -105,10 +120,14 @@ export const useSubWindow = () => {
         if (errorMessage) {
           console.error('❌ API error received:', errorMessage);
           setError(`API Error: ${errorMessage}`);
+          setIsAnalyzing(false);
+          setIsLoading(false);
         }
       } catch (err) {
         console.error('❌ Error handling API error:', err);
         setError('Failed to handle API error');
+        setIsAnalyzing(false);
+        setIsLoading(false);
       }
     };
 
@@ -185,6 +204,7 @@ export const useSubWindow = () => {
   
   return {
     isLoading,
+    isAnalyzing,
     error,
     options,
     captureData,
@@ -194,6 +214,4 @@ export const useSubWindow = () => {
     handleClose,
     openMainWindow,
   };
-};
-
-export default useSubWindow; 
+}; 

@@ -8,7 +8,7 @@ from fastapi import WebSocket
 from datetime import datetime
 import websockets
 from db.repositories import MessageRepository
-from db.database import SessionLocal
+from db.database import AsyncSessionLocal
 
 logger = logging.getLogger(__name__)
 
@@ -465,8 +465,7 @@ class WebSocketManager:
                 if conversation_id:
                     try:
                         # Get a new DB session (important for background tasks/async context)
-                        db = SessionLocal()
-                        try:
+                        async with AsyncSessionLocal() as db:
                             message_repo = MessageRepository(db)
                             # Save as a 'user' message (or potentially a dedicated 'human_input' role?)
                             message_repo.create({
@@ -480,8 +479,6 @@ class WebSocketManager:
                                 }
                             })
                             self.logger.info(f"Saved human input for query {query_id} to conversation {conversation_id}")
-                        finally:
-                            db.close() # Ensure session is closed
                     except Exception as db_err:
                         self.logger.error(f"Failed to save human input to DB for conversation {conversation_id}: {db_err}")
                 else:

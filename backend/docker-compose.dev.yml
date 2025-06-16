@@ -24,37 +24,19 @@ services:
       - GCS_SERVICE_ACCOUNT_KEY=/app/key.json
       - GCS_BUCKET_NAME=${GCS_BUCKET_NAME}
       - GCS_ENABLED=${GCS_ENABLED}
-      # MCP Agent Settings
-      - MCP_AGENT_ENABLED=true
-      - MCP_CONFIG_PATH=/app/mcp_local/mcp_agent.config.yaml
-      # Anthropic API Settings
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - ANTHROPIC_MODEL=claude-3-5-haiku-20241022
-      # Qdrant Settings - IMPORTANT: Force using the local qdrant container
-      - QDRANT_URL=http://qdrant:6333
-      - QDRANT_COLLECTION_NAME=denker_embeddings
-      - QDRANT_ENABLED=true
-      - QDRANT_VECTOR_SIZE=384
-      - USE_LOCAL_QDRANT=true
-      # QDRANT_SEARCH_LIMIT=3
-      # Google Search API - Required for websearch server
-      - GOOGLE_API_KEY=AIzaSyCa_aJ2I3j3L47mTI4YLSZYfI0moRnyw7A
-      - GOOGLE_CSE_ID=40d4f27f2b3a24796
       # LLM Settings
       - DEFAULT_LLM_PROVIDER=vertex_ai
       - DEFAULT_LLM_MODEL=gemini-2.0-flash
       - VERTEX_AI_ENABLED=true
       - VERTEX_AI_PROJECT_ID=${VERTEX_AI_PROJECT_ID}
       - VERTEX_AI_LOCATION=europe-west4
+      # Auth0
       - AUTH0_DOMAIN=${AUTH0_DOMAIN}
       - AUTH0_API_AUDIENCE=${AUTH0_API_AUDIENCE}
     volumes:
-      # - .:/app # <-- COMMENTED OUT TO PREVENT OVERRIDING INSTALLED PACKAGES
       - ./tests:/app/tests
       - ./key.json:/app/key.json
       - ./vertexai.json:/app/vertexai.json
-      - ${HOME}/Desktop:/user_desktop
-      - ${HOME}/Downloads:/user_downloads
     ports:
       - "8001:8001"  # FastAPI main application port
     extra_hosts:

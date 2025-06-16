@@ -24,7 +24,7 @@ import LinkedInIcon from '@mui/icons-material/LinkedIn';
 import { useNavigate } from 'react-router-dom';
 
 // API
-import { apiService } from '../services/apiService';
+import { api } from '../services/api';
 
 const ContactPage: React.FC = () => {
   const theme = useTheme();
@@ -64,7 +64,7 @@ const ContactPage: React.FC = () => {
     setIsSubmitting(true);
     
     try {
-      await apiService.post('/contact', {
+      await api.post('/contact', {
         name,
         email,
         subject,

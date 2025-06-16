@@ -53,12 +53,31 @@ export const useCurrentConversation = () => {
    * @returns The loaded conversation or null if failed
    */
   const loadConversation = useCallback(async (id: string) => {
+    console.log(`🚀 [useCurrentConversation] loadConversation CALLED for ID: ${id}`);
     if (!id) {
       console.error('No conversation ID provided to loadConversation');
       return null;
     }
 
-    // At this point we need to load from API
+    // Prevent duplicate loading
+    if (loadedConversations.current.has(id) && state.loadState === ConversationLoadState.LOADED) {
+      console.log(`[useCurrentConversation] Conversation ${id} already loaded and tracked, skipping duplicate load`);
+      const existingConversation = getCurrentConversation();
+      if (existingConversation && existingConversation.messages && existingConversation.messages.length > 0) {
+        return existingConversation;
+      }
+    }
+
+    // First check if conversation with messages already exists in Zustand
+    const existingConversation = getCurrentConversation();
+    if (existingConversation && existingConversation.id === id && existingConversation.messages && existingConversation.messages.length > 0) {
+      console.log(`[useCurrentConversation] Conversation ${id} already loaded with ${existingConversation.messages.length} messages, using Zustand data`);
+      loadedConversations.current.add(id);
+      setState({ loadState: ConversationLoadState.LOADED, error: null });
+      return existingConversation;
+    }
+
+    // Need to load from API
     console.log(`Loading initial messages for conversation ${id} from API`);
     setState({ loadState: ConversationLoadState.LOADING, error: null });
     // Reset pagination state as we load all
@@ -78,47 +97,66 @@ export const useCurrentConversation = () => {
       const fetchedMessages = conversationData.messages || [];
       console.log(`API returned conversation ${id} with ${fetchedMessages.length} messages`);
 
-      // Process fetched messages - DEFER FILE LOADING
-      const allFiles = useFileStore.getState().files; // Get current file list
+      // Wait for file store hydration with timeout
+      const waitForFileStoreHydration = async () => {
+        const maxWaitTime = 2000; // 2 seconds max
+        const checkInterval = 100; // Check every 100ms
+        let waited = 0;
+        
+        while (!useFileStore.getState()._hasHydrated && waited < maxWaitTime) {
+          await new Promise(resolve => setTimeout(resolve, checkInterval));
+          waited += checkInterval;
+        }
+        
+        return useFileStore.getState()._hasHydrated;
+      };
+
+      const fileStoreReady = await waitForFileStoreHydration();
+      if (!fileStoreReady) {
+        console.warn(`[loadConversation - ${id}] File store did not hydrate within timeout. Proceeding with potentially incomplete file data.`);
+      } else {
+        console.log(`[loadConversation - ${id}] File store is hydrated. Proceeding with file mapping.`);
+      }
+
+      // Process fetched messages
+      const allFiles = useFileStore.getState().files;
       
       console.log(`[loadConversation - ${id}] File store state contains ${allFiles.length} files. IDs:`, allFiles.map(f => f.id));
       const messages: Message[] = fetchedMessages.map((msg: any) => {
+        console.log(`[loadConversation - ${id}] Msg ${msg.id}: Raw metadata from backend:`, JSON.parse(JSON.stringify(msg.metadata)));
         const fileIds = msg.metadata?.file_ids || [];
-        // --- ADDED: Log file IDs being processed ---
         if (fileIds.length > 0) {
           console.log(`[loadConversation - ${id}] Processing message ${msg.id} with file IDs:`, fileIds);
         }
-        // --- END ADDED ---
 
         // Map file IDs to full FileAttachment objects
         const fileAttachments: FileAttachment[] = fileIds
           .map((fileId: string): FileAttachment | null => {
             const fileDetail = allFiles.find(f => f.id === fileId);
+            console.log(`[loadConversation - ${id}] Msg ${msg.id}, FileId ${fileId}: Found fileDetail in store:`, fileDetail);
             if (fileDetail) {
-              // Found details in the store
               return {
                 id: fileDetail.id,
                 name: fileDetail.filename,
                 size: fileDetail.fileSize,
                 type: fileDetail.fileType,
-                url: `/api/v1/files/${fileDetail.id}/download`, // Construct download URL
-                isUploading: false, // Assume not uploading when loading from history
+                url: `/api/v1/files/${fileDetail.id}/download`,
+                isUploading: false,
                 hasError: false,
                 isDeleted: fileDetail.isDeleted,
                 createdAt: fileDetail.createdAt,
-                status: fileDetail.isDeleted ? 'error' : 'completed', // Basic status mapping
+                status: fileDetail.isDeleted ? 'error' : 'completed',
                 errorMessage: fileDetail.isDeleted ? 'File deleted' : undefined,
-                isActive: !fileDetail.isDeleted, // Consider active if not deleted
+                isActive: !fileDetail.isDeleted,
               };
             } else {
-              // File details not found in store - might be deleted or inconsistent
               console.warn(`File details not found in store for ID: ${fileId}`);
               return null;
             }
           })
-          .filter((att: FileAttachment | null): att is FileAttachment => att !== null); // Filter out nulls (though currently none)
+          .filter((att: FileAttachment | null): att is FileAttachment => att !== null);
 
-        const timestamp = new Date(msg.created_at || msg.timestamp || Date.now()); // Ensure timestamp parsing is robust
+        const timestamp = new Date(msg.created_at || msg.timestamp || Date.now());
         return {
           id: msg.id,
           content: msg.content || "",
@@ -129,11 +167,9 @@ export const useCurrentConversation = () => {
         };
       });
 
-      // Reverse messages to store oldest-first, newest-last
-      messages.reverse();
+      console.log(`[useCurrentConversation - loadConversation] Processed messages local array (before packaging for store update) for conv ${id}:`, messages.map(m => ({id: m.id, content: m.content, files: m.files, metadata: m.metadata })));
 
-      // --- Re-enable Pagination Logic --- 
-      // Extract pagination info from response (assuming it's nested under 'pagination')
+      // Extract pagination info from response
       const hasMore = conversationData.pagination?.has_more ?? false; 
       
       console.log(`[API Check] Received hasMore from API: ${hasMore}`, conversationData.pagination);
@@ -141,7 +177,6 @@ export const useCurrentConversation = () => {
       
       let oldestMessageId: string | null = null;
       if (messages.length > 0) {
-        // Messages should already be sorted descending by backend, find the last one (oldest)
         oldestMessageId = messages[messages.length - 1].id; 
       }
       
@@ -152,7 +187,6 @@ export const useCurrentConversation = () => {
       };
       setPaginationState(newPaginationState);
       console.log(`[Pagination Debug] Set oldestMessageId in pagination state: ${oldestMessageId}`);
-      // --- End Pagination Logic ---
 
       // Create conversation object
       const conversation: Conversation = {
@@ -162,107 +196,83 @@ export const useCurrentConversation = () => {
         updatedAt: new Date(conversationData.updated_at),
         messages,
         isActive: true,
-        pagination: newPaginationState // Store pagination state
+        pagination: newPaginationState
       };
 
       console.log(`Successfully loaded conversation ${id} with ${messages.length} messages`);
       loadedConversations.current.add(id);
-      updateConversation(id, conversation); // Update store
+      updateConversation(id, conversation);
+      console.log('[useCurrentConversation] Store state after updateConversation:', useConversationStore.getState().conversations.find(c => c.id === id)?.messages.map(m => ({id: m.id, content: m.content, files: m.files, metadata: m.metadata })));
       setState({ loadState: ConversationLoadState.LOADED, error: null });
       return conversation;
 
     } catch (err) {
-        // Log the full error object for more details
         console.error(`Error loading conversation ${id}:`, err);
-        const errorMessage = err instanceof Error ? err.message : String(err); // Get message or stringify
+        const errorMessage = err instanceof Error ? err.message : String(err);
         console.error(`Parsed error message for state:`, errorMessage);
 
         setState({ loadState: ConversationLoadState.ERROR, error: errorMessage });
-        // Ensure pagination state reflects error? Maybe set hasMore to false?
-        // Let's keep hasMoreMessages as it was, don't assume error means no more messages.
         setPaginationState(prev => ({ ...prev, isLoadingMore: false })); 
         return null;
     }
   }, [api, updateConversation, getCurrentConversation]);
 
-  // Load the current conversation when ID changes or state requires it
+  // Simplified useEffect for conversation loading
   useEffect(() => {
+    console.log(`[useCurrentConversation] useEffect triggered for conversation ID: ${currentConversationId}`);
+    
     if (!currentConversationId) {
-      console.log("[Pagination Debug] useEffect [v3]: No currentConversationId, skipping.");
+      console.log('[useCurrentConversation] No current conversation ID, skipping load');
       return;
     }
 
-    console.log(`[Pagination Debug] useEffect [v3]: Checking conversation ${currentConversationId}. Load state: ${state.loadState}`);
+    // Skip if already in error state (prevents infinite retry loops)
+    if (state.loadState === ConversationLoadState.ERROR) {
+      console.log(`[useCurrentConversation] State is ERROR, skipping load trigger.`);
+      return;
+    }
 
-    // Always skip if already loading or in a final error state
+    // Skip if already loading
     if (state.loadState === ConversationLoadState.LOADING) {
-      console.log(`[Pagination Debug] useEffect [v3]: State is LOADING, skipping load trigger.`);
-      return;
-    }
-    else if (state.loadState === ConversationLoadState.ERROR) {
-      console.log(`[Pagination Debug] useEffect [v3]: State is ERROR, skipping load trigger.`);
+      console.log(`[useCurrentConversation] Already loading, skipping duplicate load trigger.`);
       return;
     }
 
-    // --- ADDED: Delay before checking rehydration state ---
-    const checkTimer = setTimeout(() => {
-      console.log("[Rehydration Check] Running delayed check...");
+    // Check if conversation is already loaded
+    const currentConv = getCurrentConversation();
+    const isConversationLoaded = currentConv && 
+                                currentConv.id === currentConversationId && 
+                                currentConv.messages && 
+                                currentConv.messages.length > 0;
+
+    if (isConversationLoaded && loadedConversations.current.has(currentConversationId)) {
+      console.log(`[useCurrentConversation] Conversation ${currentConversationId} is already loaded and tracked, skipping load.`);
+      setState({ loadState: ConversationLoadState.LOADED, error: null });
+      return;
+    }
+
+    // Check if files need population (only if conversation exists but files are missing)
+    if (currentConv && currentConv.id === currentConversationId && currentConv.messages) {
+      const needsFilePopulation = currentConv.messages.some(msg => {
+        const hasFileIds = msg.metadata?.file_ids && msg.metadata.file_ids.length > 0;
+        const filesMissingOrEmpty = !msg.files || msg.files.length === 0; 
+        return hasFileIds && filesMissingOrEmpty;
+      });
       
-      // --- Check for incomplete file data after rehydration ---
-      const currentConv = getCurrentConversation();
-      // --- ADDED: Log currentConv state ---
-      console.log(`[Rehydration Check - CONV STATE] currentConv:`, 
-        currentConv ? 
-        { id: currentConv.id, messageCount: currentConv.messages?.length, firstMsgFiles: currentConv.messages?.[0]?.files } : 
-        null
-      );
-      // --- END ADDED ---
-      let needsFilePopulation = false;
-      if (currentConv && currentConv.messages) {
-        // --- ADDED: Log entering the inner check ---
-        console.log(`[Rehydration Check - INNER CHECK] Entered check for conv ${currentConv.id}`);
-        // --- END ADDED ---
-        needsFilePopulation = currentConv.messages.some(msg => {
-          const hasFileIds = msg.metadata?.file_ids && msg.metadata.file_ids.length > 0;
-          // --- REVISED CHECK: Check if files property is missing or empty ---
-          const filesMissingOrEmpty = !msg.files || msg.files.length === 0; 
-          return hasFileIds && filesMissingOrEmpty;
-          // --- END REVISED CHECK ---
-        });
-        
-        if (needsFilePopulation) {
-          console.log(`[Rehydration Check] Conversation ${currentConversationId} needs file details populated. Forcing load.`);
-          // --- ADDED: Confirm trigger --- 
-          console.log(`[Rehydration Check - TRIGGERING] Calling loadConversation(${currentConversationId}) NOW.`);
-          // --- END ADDED ---
-          // Force load if files are missing details
-          loadConversation(currentConversationId);
-          return; // Exit useEffect after triggering load
-        }
-      }
-      // --- END ADDED ---
-
-      // Check if this specific conversation has already been successfully loaded and tracked.
-      // We only trigger loadConversation if it's IDLE, or if the conversation ID
-      // changed to one that hasn't been successfully loaded *and added to the ref* yet.
-      if (state.loadState === ConversationLoadState.LOADED && loadedConversations.current.has(currentConversationId)) {
-        console.log(`[Pagination Debug] useEffect [v3]: State is LOADED and conversation ${currentConversationId} is already tracked in loadedConversations ref. Skipping load trigger.`);
-        // If needed, ensure pagination state is synced from store (optional optimization)
-        // const currentConv = getCurrentConversation();
-        // if (currentConv?.pagination && ...) { setPaginationState(currentConv.pagination); }
+      if (needsFilePopulation) {
+        console.log(`[useCurrentConversation] Conversation ${currentConversationId} needs file details populated. Forcing load.`);
+        loadConversation(currentConversationId);
         return;
       }
+    }
 
-      // 5. If not returned yet, trigger load
-      console.log(`[!!!] useEffect [v3]: PRE-LOAD CHECK for Conv ${currentConversationId}: state=${state.loadState}, tracked=${loadedConversations.current.has(currentConversationId)}`);
-      console.log(`[Pagination Debug] useEffect [v3]: Triggering loadConversation(${currentConversationId}) because state is ${state.loadState} and/or conversation not tracked.`);
+    // If conversation doesn't exist or has no messages, load it
+    if (!isConversationLoaded) {
+      console.log(`[useCurrentConversation] Loading conversation ${currentConversationId} - not loaded or empty`);
       loadConversation(currentConversationId);
-      
-    }, 200); // Delay of 200ms
-    // --- END ADDED ---
+    }
 
-  // DEPENDENCY CHANGE: Only react to the ID changing. State checks happen inside.
-  }, [currentConversationId]); // REMOVE loadConversation dependency
+  }, [currentConversationId, getCurrentConversation, loadConversation, state.loadState]);
 
   /**
    * Update conversation title
@@ -374,7 +384,7 @@ export const useCurrentConversation = () => {
               return null;
             }
           })
-          .filter((att: FileAttachment | null): att is FileAttachment => att !== null); // Filter out nulls
+          .filter((att: FileAttachment | null): att is FileAttachment => att !== null);
 
         const timestamp = new Date(msg.created_at || msg.timestamp || Date.now()); // Ensure timestamp parsing is robust
         return {
@@ -387,11 +397,8 @@ export const useCurrentConversation = () => {
         };
       });
 
-      // Reverse messages to store oldest-first, newest-last for prepending
-      olderMessages.reverse();
-
       // Determine the new oldest message ID from the fetched batch
-      const newOldestMessageId = olderMessages.length > 0 ? olderMessages[olderMessages.length - 1].id : cursor; 
+      const newOldestMessageId = olderMessages.length > 0 ? olderMessages[olderMessages.length - 1].id : cursor;
 
       const newPaginationState: PaginationState = {
         isLoadingMore: false,
@@ -413,7 +420,7 @@ export const useCurrentConversation = () => {
         const currentConv = getCurrentConversation();
         if (currentConv) {
           updateConversation(currentConversationId, {
-             messages: [...olderMessages.reverse(), ...currentConv.messages], // Ensure correct order
+             messages: [...olderMessages, ...currentConv.messages], // Ensure correct order
              pagination: newPaginationState 
           });
         }

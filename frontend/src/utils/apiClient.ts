@@ -1,3 +1,5 @@
+import { getCachedAccessToken } from './token-cache';
+
 let API_BASE_URL;
 if (import.meta.env.DEV) {
   API_BASE_URL = 'http://localhost:8001/api/v1';
@@ -6,6 +8,20 @@ if (import.meta.env.DEV) {
   API_BASE_URL = import.meta.env.VITE_API_URL_PROD || 'https://your-prod-api.denker.ai/api/v1'; 
 }
 console.log('[fetchWithAuth] Determined API_BASE_URL:', API_BASE_URL, '(Dev mode:', import.meta.env.DEV+')');
+
+// Define ElectronAPI interface for TypeScript
+interface ElectronAPI {
+  getAccessToken?: () => Promise<string>;
+  getUserInfo?: () => Promise<any>;
+  getApiUrl?: () => Promise<string>;
+  getApiKey?: () => Promise<string>;
+  getEnvVars?: () => Record<string, string>;
+  onSelectedOption?: (callback: (option: any) => void) => void;
+  [key: string]: any;
+}
+
+// Instead of extending Window interface directly, use type assertion when needed
+// This avoids conflicts with other declarations
 
 /**
  * Fetches data from the backend API, automatically handling authentication.
@@ -23,13 +39,16 @@ export const fetchWithAuth = async (
   let token: string | null = null;
   
   try {
-    // 1. Request token from main process via IPC
-    token = await window.electron?.getAccessToken();
-    console.log('[fetchWithAuth] Token:', token);
+    // Use cached token system to prevent multiple simultaneous getAccessToken calls
+    token = await getCachedAccessToken();
+    console.log('[fetchWithAuth] Token:', token ? 'Found token' : 'No token');
   } catch (error) {
-    console.error('Error requesting access token via IPC:', error);
-    // Decide how to handle this - maybe throw a specific error?
-    // For now, we proceed without a token, the API might return 401.
+    console.error('Error requesting access token via cached system:', error);
+    // For development, don't crash on missing Electron APIs
+    if (import.meta.env.DEV) {
+      console.log('[fetchWithAuth] Using dev fallback token');
+      token = 'dev-mode-token';
+    }
   }
   
   // 2. Prepare headers
@@ -60,6 +79,7 @@ export const fetchWithAuth = async (
   const response = await fetch(url, {
     ...options,
     headers,
+    credentials: 'include', // Include cookies in the request
   });
   console.log('[fetchWithAuth] Response status:', response.status);
   

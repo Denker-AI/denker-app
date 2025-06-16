@@ -1,0 +1,49 @@
+#!/bin/bash
+cd local-backend && . venv/bin/activate && pyinstaller main.py \
+  --name local-backend-pkg \
+  --onedir \
+  --noconsole \
+  --noconfirm \
+  --clean \
+  --runtime-hook runtime_hooks/node_path_hook.py \
+  --add-data "mcp_local/mcp_agent.config.yaml:mcp_local" \
+  --add-data "mcp_local/mcp_agent.secrets.yaml:mcp_local" \
+  --add-data "venv/lib/python3.11/site-packages/unstructured/nlp/english-words.txt:unstructured/nlp" \
+  --add-data "venv/lib/python3.11/site-packages/onnxruntime/tools/symbolic_shape_infer.py:onnxruntime/tools" \
+  --collect-all onnxruntime.transformers \
+  --hidden-import=onnx \
+  --hidden-import=tensorboard \
+  --hidden-import=mx.DateTime \
+  --hidden-import=scipy.special._cdflib \
+  --hidden-import='importlib_resources.trees' \
+  --hidden-import="uvicorn.logging" \
+  --hidden-import="uvicorn.loops" \
+  --hidden-import="uvicorn.loops.auto" \
+  --hidden-import="uvicorn.protocols" \
+  --hidden-import="uvicorn.protocols.http" \
+  --hidden-import="uvicorn.protocols.http.auto" \
+  --hidden-import="uvicorn.protocols.websockets" \
+  --hidden-import="uvicorn.protocols.websockets.auto" \
+  --hidden-import="uvicorn.lifespan" \
+  --hidden-import="uvicorn.lifespan.on" \
+  --hidden-import="fastapi_another_json_patch" \
+  --hidden-import="mcp_server_fetch" \
+  --hidden-import="mcp_server_qdrant" \
+  --hidden-import="mcp_server_qdrant.main" \
+  --hidden-import="mcp_local.servers.websearch.server" \
+  --hidden-import="mcp_local.servers.document_loader.server" \
+  --hidden-import="mcp_local.servers.markdown_editor.server" \
+  --hidden-import="mcp_local.servers.markdown_editor.markdown_editor" \
+  --hidden-import="mcp_local.servers.markdown_editor.markdown_converter" \
+  --hidden-import="mcp_local.servers.markdown_editor.markdown_preview" \
+  --hidden-import="mcp_local.servers.markdown_editor.markdown_integration" \
+  --hidden-import="mcp_local.servers.markdown_editor.chart_generator" \
+  --hidden-import="mcp_local.servers.markdown_editor.table_generator" \
+  --hidden-import="mcp_local.core.shared_workspace" \
+  --hidden-import="mcp_local.core.websocket_manager" \
+  --hidden-import="aiohttp" \
+  --hidden-import="aiohttp.client" \
+  --hidden-import="aiohttp.connector" \
+  --hidden-import="services.background_preloader" \
+  --hidden-import="services.mcp_server_prewarmer" \
+  && cd .. 

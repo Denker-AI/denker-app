@@ -22,8 +22,6 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from mcp_local.coordinator_agent import CoordinatorAgent
-from core.global_coordinator import initialize_coordinator, cleanup_coordinator
 
 # Set up logging first, before any other imports
 setup_logging()
@@ -40,43 +38,37 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    # In production, add allowed origins for both localhost (dev) and electron app schemes
     allow_origins=[
-        "http://localhost:*",  # Local development 
-        "https://denker-frontend.app",  # If you have a specific URL for your Electron app
-        "denker://*",  # For Electron custom URL scheme if used
-    ] if not settings.DEBUG else ["*"],  # In debug mode, allow all origins
+        "http://localhost:5173",  # Frontend development server - explicit
+        "http://localhost:3000",
+        "http://localhost:8080", 
+        "http://localhost:9001",
+        "https://denker-frontend.app",
+        "denker://*"
+    ],  # No longer using wildcards or condition
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],  # Explicitly list methods
     allow_headers=["*"],
-    expose_headers=["Content-Disposition"],  # Important for file downloads
+    expose_headers=["Content-Disposition"],
 )
 
-# Add WebSocket-specific CORS headers
+# Add CORS debugging middleware
 @app.middleware("http")
-async def add_websocket_cors_headers(request, call_next):
-    # Log incoming WebSocket requests for debugging
-    if "upgrade" in request.headers and request.headers["upgrade"].lower() == "websocket":
-        logger.info(f"🔌 Incoming WebSocket connection attempt: {request.url.path}")
-        logger.info(f"🔌 Request headers: {request.headers}")
-        
-        # For WebSocket connections, check if it's an MCP agent endpoint
-        # Check both patterns - with and without the /api/v1/agents prefix
-        if "/ws/mcp-agent/" in request.url.path or "/api/v1/agents/ws/mcp-agent/" in request.url.path:
-            logger.info(f"🔌 WebSocket agent connection detected and approved: {request.url.path}")
-            # Let the connection proceed directly to the WebSocket handler
-            return await call_next(request)
-        else:
-            logger.warning(f"🔌 WebSocket connection with unrecognized path: {request.url.path}")
+async def cors_debugging_middleware(request: Request, call_next):
+    """Debug middleware to log CORS related headers"""
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
+    if request.method == "OPTIONS":
+        logger.info(f"CORS preflight request detected for {request.url.path}")
+        logger.info(f"Origin: {request.headers.get('origin')}")
     
-    # For regular HTTP requests, proceed with normal handling
     response = await call_next(request)
     
-    # Add CORS headers for WebSocket paths (both with and without prefix)
-    if "/ws/" in request.url.path or "/api/v1/agents/ws/" in request.url.path:
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
+    # Log CORS headers in response
+    if 'origin' in request.headers:
+        logger.info(f"CORS Response to {request.url.path}:")
+        logger.info(f"  Access-Control-Allow-Origin: {response.headers.get('access-control-allow-origin')}")
+        logger.info(f"  Access-Control-Allow-Credentials: {response.headers.get('access-control-allow-credentials')}")
+        logger.info(f"  Access-Control-Allow-Methods: {response.headers.get('access-control-allow-methods')}")
     
     return response
 
@@ -104,7 +96,7 @@ async def startup_event():
         # Vertex AI is already initialized in its constructor
         if settings.VERTEX_AI_ENABLED:
             logger.info("Vertex AI initialized successfully")
-            
+        
         # Setup authentication
         setup_auth(app)
         logger.info("Authentication setup completed")
@@ -114,48 +106,34 @@ async def startup_event():
             scheduler = SchedulerService()
             scheduler.start()
             logger.info("Scheduler service started")
-            
-        # Initialize the global coordinator agent
-        await initialize_coordinator()
-        logger.info("Global coordinator agent initialized")
         
-        # Perform health check to verify MCP Agent is properly started
-        from core.global_coordinator import get_coordinator
-        coordinator = await get_coordinator()
-        health_status = await coordinator.check_health()
-        
-        # Define critical components that must be healthy for the app to function
-        # This can be customized or made configurable through settings
-        critical_components = ["coordinator", "mcp_app"]
-        
-        # Log the health status of each component
-        logger.info("MCP Agent health check results:")
-        all_healthy = True
-        critical_failure = False
-        
-        for component, status in health_status.items():
-            log_level = logging.INFO if status else logging.WARNING
-            logger.log(log_level, f"  - {component}: {'✅' if status else '❌'}")
-            
-            if not status:
-                all_healthy = False
-                if component in critical_components:
-                    critical_failure = True
-        
-        # Determine overall health
-        if all_healthy:
-            logger.info("✅ MCP Agent is fully operational")
-        elif critical_failure:
-            error_msg = "❌ Critical MCP Agent components failed to initialize"
-            logger.error(error_msg)
-            
-            # Option 1: Fail hard if STRICT_HEALTH_CHECK is enabled (configurable)
-            if getattr(settings, 'STRICT_HEALTH_CHECK', False):
-                raise RuntimeError(error_msg)
-            # Option 2: Continue with warnings otherwise
-        else:
-            logger.warning("⚠️ MCP Agent is partially operational (degraded state)")
-            
+        # --- MCP agent/coordinator logic is now handled by the local backend (Electron app) ---
+        logger.info("MCP agent/coordinator logic is now handled by the local backend (Electron app). Skipping coordinator and MCP server initialization.")
+        # await initialize_coordinator()
+        # logger.info("Global coordinator agent initialized")
+        # from core.global_coordinator import get_coordinator
+        # coordinator = await get_coordinator()
+        # health_status = await coordinator.check_health()
+        # critical_components = ["coordinator", "mcp_app"]
+        # logger.info("MCP Agent health check results:")
+        # all_healthy = True
+        # critical_failure = False
+        # for component, status in health_status.items():
+        #     log_level = logging.INFO if status else logging.WARNING
+        #     logger.log(log_level, f"  - {component}: {'✅' if status else '❌'}")
+        #     if not status:
+        #         all_healthy = False
+        #         if component in critical_components:
+        #             critical_failure = True
+        # if all_healthy:
+        #     logger.info("✅ MCP Agent is fully operational")
+        # elif critical_failure:
+        #     error_msg = "❌ Critical MCP Agent components failed to initialize"
+        #     logger.error(error_msg)
+        #     if getattr(settings, 'STRICT_HEALTH_CHECK', False):
+        #         raise RuntimeError(error_msg)
+        # else:
+        #     logger.warning("⚠️ MCP Agent is partially operational (degraded state)")
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
         logger.error(traceback.format_exc())
@@ -165,12 +143,11 @@ async def startup_event():
 async def shutdown_event():
     """Clean up resources on application shutdown"""
     try:
-        # Clean up the global coordinator
-        await cleanup_coordinator()
-        logger.info("Global coordinator cleaned up")
-        
+        # --- MCP agent/coordinator logic is now handled by the local backend (Electron app) ---
+        logger.info("Skipping global coordinator cleanup; handled by local backend.")
+        # await cleanup_coordinator()
+        # logger.info("Global coordinator cleaned up")
         # Add other cleanup tasks as needed
-        
     except Exception as e:
         logger.error(f"Error during shutdown: {str(e)}")
         logger.error(traceback.format_exc())

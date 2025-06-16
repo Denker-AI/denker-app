@@ -178,7 +178,7 @@ class CoordinatorMemory:
         entity = result["nodes"][0]
         
         # Add conversation reference as metadata
-        metadata = entity.get("metadata", {})
+        metadata = entity.get("meta_data", {})
         if not metadata:
             metadata = {}
             
@@ -192,7 +192,7 @@ class CoordinatorMemory:
         await self.memory_tools.mcp_memory_update_entities(entities=[
             {
                 "name": entity_name,
-                "metadata": metadata
+                "meta_data": metadata
             }
         ])
         
@@ -218,7 +218,7 @@ class CoordinatorMemory:
         entity = result["nodes"][0]
         
         # Extract conversation reference from metadata
-        metadata = entity.get("metadata", {})
+        metadata = entity.get("meta_data", {})
         if not metadata:
             return {}
             

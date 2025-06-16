@@ -1,6 +1,5 @@
 import logging
 from datetime import datetime, timedelta
-from sqlalchemy.orm import Session
 from google.cloud import storage
 from google.oauth2 import service_account
 

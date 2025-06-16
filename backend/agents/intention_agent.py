@@ -42,7 +42,7 @@ class IntentionAgent(BaseAgent):
     
         self.vertex_ai_service = vertex_ai_service
     
-    async def process(self, text: Optional[str] = None, screenshot: Optional[str] = None, mode: str = 'text') -> List[dict]:
+    async def process(self, text: Optional[str] = None, screenshot: Optional[str] = None, screenshot_mime_type: Optional[str] = None, mode: str = 'text') -> List[dict]:
         """
         Process user intention based on text and/or screenshot.
         Returns a list of options with id, title, and description.
@@ -63,12 +63,18 @@ class IntentionAgent(BaseAgent):
             response = await self.vertex_ai_service.process_multimodal_input(
                 text=prompt,
                 image_base64=screenshot,  # Pass the raw screenshot
+                image_mime_type=screenshot_mime_type, # Pass the mime_type
                 max_tokens=300,  # Reduced from 1000 to 300 since we only need ~100-150 tokens
                 temperature=0.3
             )
             vertex_time = time.time() - vertex_start_time
             self.logger.info(f"Vertex AI processing completed in {vertex_time:.2f}s")
             
+            # Add a check for None or empty response
+            if not response:
+                self.logger.warning("Received no response from Vertex AI. Returning empty options list.")
+                return []
+
             # Parse response into options
             parse_start_time = time.time()
             options = self._parse_options(response)
@@ -87,10 +93,11 @@ class IntentionAgent(BaseAgent):
 
     def _prepare_prompt(self, text: Optional[str], screenshot: Optional[str]) -> str:
         """Prepare prompt for Vertex AI based on available inputs."""
+        context_description = "Screenshot provided, showing user's current desktop context" if screenshot else "No screenshot provided"
         prompt = f"""Analyze the highlighted text ($content$) and desktop screenshot ($context$). How can you help the user with their current activity and task?
 
 $content$: {text or "(No text selected)"}          
-$Context$: {"Screenshot provided, showing user's current desktop context" if screenshot else "No screenshot provided"}
+$Context$: {context_description}
 
 1. Analyze $content$:
    - Count words

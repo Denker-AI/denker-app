@@ -36,12 +36,6 @@ class Settings(BaseSettings):
     MCP_REQUEST_TIMEOUT: int = Field(default=30)
     MCP_MAX_RETRIES: int = Field(default=3)
     
-    # Qdrant settings
-    QDRANT_URL: str = Field(default="http://localhost:6333")
-    QDRANT_COLLECTION_NAME: str = Field(default="denker_embeddings")
-    QDRANT_ENABLED: bool = Field(default=True)
-    QDRANT_VECTOR_SIZE: int = Field(default=768)  # Default for Gemini embeddings
-    
     # Auth settings
     AUTH0_DOMAIN: str
     AUTH0_API_AUDIENCE: str
@@ -86,6 +80,11 @@ class Settings(BaseSettings):
     # Scheduler
     SCHEDULER_ENABLED: bool = Field(default=False)
     
+    # Qdrant Configuration
+    QDRANT_URL: Optional[str] = None
+    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_COLLECTION_NAME: Optional[str] = "denker_embeddings"
+    
     def __init__(self, **data: Any):
         super().__init__(**data)
         # Set DATABASE_URL after initialization
@@ -93,12 +92,12 @@ class Settings(BaseSettings):
     
     class Config:
         env_file = ".env"
+        env_file_encoding = "utf-8"
         case_sensitive = True
 
 # Create settings instance
 settings = Settings()
 
-# Database connection configs
 database_config: Dict[str, Dict[str, Any]] = {
     "postgres": {
         "host": settings.POSTGRES_HOST,
@@ -106,10 +105,5 @@ database_config: Dict[str, Dict[str, Any]] = {
         "user": settings.POSTGRES_USER,
         "password": settings.POSTGRES_PASSWORD,
         "database": settings.POSTGRES_DB,
-    },
-    "qdrant": {
-        "url": settings.QDRANT_URL,
-        "collection": settings.QDRANT_COLLECTION_NAME,
-        "enabled": settings.QDRANT_ENABLED
     }
 }
