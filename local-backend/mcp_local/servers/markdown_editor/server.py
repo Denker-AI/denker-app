@@ -486,7 +486,34 @@ def add_image(file_path: str, image_path: str, alt_text: str = "", position: Opt
             }
         ])
     else:
-        return append_to_markdown(file_path, f"\n\n{image_md}\n")
+        # Auto-detect best position when none provided
+        try:
+            # Get image description from alt_text if available, otherwise use generic description
+            image_description = alt_text if alt_text else "Image for document"
+            
+            # Get position suggestions
+            suggestions_result = suggest_image_positions(file_path, image_description, alt_text)
+            
+            if suggestions_result.get("success") and suggestions_result.get("suggestions"):
+                # Use the first (best) suggestion
+                best_position = suggestions_result["suggestions"][0]["position"]
+                logger.info(f"Auto-detected best position for image: line {best_position} - {suggestions_result['suggestions'][0]['explanation']}")
+                
+                return edit_markdown(file_path, [
+                    {
+                        "type": "insert_at_line",
+                        "line_number": best_position,
+                        "text": image_md
+                    }
+                ])
+            else:
+                logger.warning("Could not auto-detect position, falling back to append")
+                # Fallback to appending if auto-detection fails
+                return append_to_markdown(file_path, f"\n\n{image_md}\n")
+        except Exception as e:
+            logger.warning(f"Error during auto-detection of image position: {e}, falling back to append")
+            # Fallback to appending if any error occurs
+            return append_to_markdown(file_path, f"\n\n{image_md}\n")
 
 @app.tool()
 def convert_to_md(source_file: str, output_path: Optional[str] = None) -> Dict[str, Any]:
@@ -530,25 +557,25 @@ def convert_from_md(markdown_file: str, output_format: str, output_path: Optiona
     
     return convert_from_markdown(markdown_file, output_format, output_path, options)
 
-@app.tool()
-def preview(file_path: str, format: str = "html") -> Dict[str, Any]:
-    """
-    Generate a preview of a Markdown document.
-    
-    Args:
-        file_path: Path to the Markdown file
-        format: Preview format (html or text)
-        
-    Returns:
-        Preview content
-    """
-    # Try to resolve file path from workspace
-    resolved_path = find_workspace_file(file_path)
-    if resolved_path:
-        file_path = resolved_path
-        logger.info(f"Resolved file path from workspace: {file_path}")
-    
-    return preview_markdown(file_path, format)
+# @app.tool()
+# def preview(file_path: str, format: str = "html") -> Dict[str, Any]:
+#     """
+#     Generate a preview of a Markdown document.
+#     
+#     Args:
+#         file_path: Path to the Markdown file
+#         format: Preview format (html or text)
+#         
+#     Returns:
+#         Preview content
+#     """
+#     # Try to resolve file path from workspace
+#     resolved_path = find_workspace_file(file_path)
+#     if resolved_path:
+#         file_path = resolved_path
+#         logger.info(f"Resolved file path from workspace: {file_path}")
+#     
+#     return preview_markdown(file_path, format)
 
 @app.tool()
 def live_preview(file_path: str, port: int = 8000) -> Dict[str, Any]:
@@ -1188,25 +1215,25 @@ def suggest_image_positions(file_path: str, image_description: str, image_alt_te
         "recommendation": "Review the suggestions and choose the position that best fits the image content and document flow. Consider the image's relevance to each section."
     }
 
-@app.tool()
-def add_image_at_position(file_path: str, image_path: str, position: int, alt_text: str = "") -> Dict[str, Any]:
-    """
-    Add an image to a specific position in a markdown document.
-    
-    Args:
-        file_path: Path to the Markdown file or workspace file ID
-        image_path: Path to the image file or workspace file ID
-        position: Line number (1-based) to insert the image at
-        alt_text: Alternative text for the image
-        
-    Returns:
-        Information about the updated file
-    """
-    # Convert to 0-based indexing for internal use
-    zero_based_position = max(0, position - 1)
-    
-    # Use the existing add_image function but with explicit position
-    return add_image(file_path, image_path, alt_text, zero_based_position)
+# @app.tool()
+# def add_image_at_position(file_path: str, image_path: str, position: int, alt_text: str = "") -> Dict[str, Any]:
+#     """
+#     Add an image to a specific position in a markdown document.
+#     
+#     Args:
+#         file_path: Path to the Markdown file or workspace file ID
+#         image_path: Path to the image file or workspace file ID
+#         position: Line number (1-based) to insert the image at
+#         alt_text: Alternative text for the image
+#         
+#     Returns:
+#         Information about the updated file
+#     """
+#     # Convert to 0-based indexing for internal use
+#     zero_based_position = max(0, position - 1)
+#     
+#     # Use the existing add_image function but with explicit position
+#     return add_image(file_path, image_path, alt_text, zero_based_position)
 
 def main():
     """Entry point for the Markdown Editor MCP server script."""

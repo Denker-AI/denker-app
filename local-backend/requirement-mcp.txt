@@ -36,11 +36,12 @@ langchain-core==0.3.59
 chromadb==0.6.3
 qdrant-client==1.14.2
 redis==6.1.0
-sentence-transformers==4.1.0
+sentence-transformers==3.3.1
+transformers==4.45.2
 sqlalchemy==2.0.40
 alembic==1.15.2
 psycopg2==2.9.10
-asyncpg==0.30.0 
+asyncpg==0.30.0
 
 # Document partitioning (for file_processing.py)
 unstructured[image,docx,xlsx,md,pdf]==0.17.2

@@ -326,19 +326,6 @@ const LoadingScreen: React.FC<LoadingScreenProps> = ({
             >
               Denker is still in testing phase - any feedback is welcomed!
             </Typography>
-            <Typography
-              variant="body2"
-              sx={{
-                color: '#ffab91',
-                fontSize: '0.75rem',
-                fontWeight: 300,
-                opacity: 0.6,
-                marginTop: 0.5,
-                fontStyle: 'italic',
-              }}
-            >
-              We apologize for any bugs you may encounter during this early stage.
-            </Typography>
           </Box>
         </Box>
       )}

@@ -210,11 +210,11 @@ const InputBoxNew: React.FC<InputBoxProps> = ({
     <Paper
       elevation={0}
       sx={{
-        p: 2,
-        m: 2,
+        p: 1, // Reduced padding from 2 to 1.5 (16px to 12px)
+        m: 1,
         borderRadius: 2,
         backgroundColor: 'transparent',
-        border: '0.25px solid #C0C0C0', // Even thinner silver lining
+        border: '1px solid rgba(255, 255, 255, 0.08)', // Much more subtle border
         boxShadow: 'none',
       }}
     >

@@ -86,8 +86,8 @@ const isFilePath = (text: string): boolean => {
   
   // Check for common file path patterns
   const filePathPatterns = [
-    // Absolute Unix/Mac paths
-    /^\/[^\/\s]+.*\.(md|txt|json|py|js|ts|tsx|jsx|html|css|scss|sass|less|png|jpg|jpeg|gif|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|csv|xml|yaml|yml|toml|ini|cfg|conf|log)$/i,
+    // Absolute Unix/Mac paths - simplified to be more inclusive
+    /^\/.*\.(md|txt|json|py|js|ts|tsx|jsx|html|css|scss|sass|less|png|jpg|jpeg|gif|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|csv|xml|yaml|yml|toml|ini|cfg|conf|log)$/i,
     // Windows absolute paths
     /^[A-Za-z]:\\[^\\]*.*\.(md|txt|json|py|js|ts|tsx|jsx|html|css|scss|sass|less|png|jpg|jpeg|gif|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|csv|xml|yaml|yml|toml|ini|cfg|conf|log)$/i,
     // Relative paths starting with ./ or ../

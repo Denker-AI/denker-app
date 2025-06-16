@@ -55,7 +55,8 @@ dependencies = [
     "chromadb==0.6.3",
     "qdrant-client==1.14.2",
     "redis==6.1.0",
-    "sentence-transformers==4.1.0",
+    "sentence-transformers==3.3.1",  # Stable version compatible with transformers 4.45.2
+    "transformers==4.45.2",  # Stable version without DeepSeek compatibility issues
     "sqlalchemy==2.0.40",
     "alembic==1.15.2",
     "psycopg2==2.9.10",
