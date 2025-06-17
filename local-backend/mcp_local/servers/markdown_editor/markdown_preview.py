@@ -445,7 +445,7 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
                         // Rewrite image src attributes to use our image serving endpoint
                         html = html.replace(/<img([^>]*?)src=["']([^"']+)["']([^>]*?)>/gi, function(match, before, src, after) {{
                             // Skip if already absolute URL (http/https/file) or data URL
-                            if (src.match(/^(https?|file):\/\//) || src.startsWith('data:')) {{
+                            if (src.match(/^(https?|file):\\/\\//) || src.startsWith('data:')) {{
                                 return match; // Return unchanged
                             }}
                             

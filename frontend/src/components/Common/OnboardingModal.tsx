@@ -11,7 +11,10 @@ import {
   Step,
   StepLabel,
   IconButton,
-  useTheme
+  useTheme,
+  Paper,
+  Snackbar,
+  Alert
 } from '@mui/material';
 import { 
   Close as CloseIcon, 
@@ -22,7 +25,9 @@ import {
   QuestionMark as HelpIcon,
   AccountCircle as ProfileIcon,
   Screenshot as ScreenshotIcon,
-  Keyboard as KeyboardIcon
+  Keyboard as KeyboardIcon,
+  ContentCopy as CopyIcon,
+  Add as AddIcon
 } from '@mui/icons-material';
 
 interface OnboardingModalProps {
@@ -37,7 +42,19 @@ interface Step {
 
 const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
   const [activeStep, setActiveStep] = useState(0);
+  const [copySuccess, setCopySuccess] = useState(false);
   const theme = useTheme();
+
+  const demoRequest = `Search online for the latest German population data and create a 2-page report with charts and tables. Include current population statistics, demographic trends, age distribution, and regional breakdowns. Show me a preview of the report when done.`;
+
+  const handleCopyDemo = async () => {
+    try {
+      await navigator.clipboard.writeText(demoRequest);
+      setCopySuccess(true);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+    }
+  };
 
   const triggerScreenshotPermission = () => {
     // Trigger the shortcut to show permission dialog
@@ -55,7 +72,7 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
       content: (
         <Box>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            Welcome to your new **AI-powered workspace**! With Denker, you now have access to multiple intelligent agents that can:
+            Welcome to your new <strong>AI-powered workspace</strong>! With Denker, you now have access to multiple intelligent agents that can:
           </Typography>
           <Box component="ul" sx={{ pl: 2, mb: 0 }}>
             <li><strong>Research</strong> any topic instantly</li>
@@ -71,10 +88,10 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
       content: (
         <Box>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            For the **best AI assistance**, Denker needs permission to take screenshots to understand your context.
+            For the <strong>best AI assistance</strong>, Denker needs permission to take screenshots to understand your context.
           </Typography>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            <strong>Try it now:</strong> Press <KeyboardIcon sx={{ fontSize: 16, mx: 0.5 }} /> 
+            <strong>Try it now:</strong> First copy some text with 
             <Box component="kbd" sx={{ 
               bgcolor: 'grey.200', 
               color: 'grey.800', 
@@ -82,7 +99,24 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
               py: 0.5, 
               borderRadius: 1,
               fontFamily: 'monospace',
-              fontSize: '0.85em'
+              fontSize: '0.85em',
+              mx: 0.5,
+              display: 'inline-block',
+              whiteSpace: 'nowrap'
+            }}>
+              ⌘ + C
+            </Box>, then press 
+            <Box component="kbd" sx={{ 
+              bgcolor: 'grey.200', 
+              color: 'grey.800', 
+              px: 1, 
+              py: 0.5, 
+              borderRadius: 1,
+              fontFamily: 'monospace',
+              fontSize: '0.85em',
+              mx: 0.5,
+              display: 'inline-block',
+              whiteSpace: 'nowrap'
             }}>
               ⌘ + Shift + D
             </Box> to trigger the permission dialog.
@@ -106,13 +140,13 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
       content: (
         <Box>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            Denker creates files in a **temporary workspace** by default. To save files directly to your preferred location:
+            Denker creates files in a <strong>temporary workspace</strong> by default. To save files directly to your preferred location:
           </Typography>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            1. Go to <SettingsIcon sx={{ fontSize: 16, mx: 0.5 }} /> **Settings** (in the side menu)
+            1. Go to <SettingsIcon sx={{ fontSize: 16, mx: 0.5 }} /> <strong>Settings</strong> (in the side menu)
           </Typography>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            2. Add a <FolderIcon sx={{ fontSize: 16, mx: 0.5 }} /> **delivery folder**
+            2. Add a <FolderIcon sx={{ fontSize: 16, mx: 0.5 }} /> <strong>delivery folder</strong>
           </Typography>
           <Typography variant="body1" sx={{ mb: 2 }}>
             <strong>Popular choices:</strong>
@@ -130,10 +164,10 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
       content: (
         <Box>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            Denker is currently in **beta testing phase**. Your feedback helps us improve!
+            Denker is currently in <strong>beta testing phase</strong>. Your feedback helps us improve!
           </Typography>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            Share your thoughts by clicking the <HelpIcon sx={{ fontSize: 16, mx: 0.5 }} /> **help icon** in the side menu.
+            Share your thoughts by clicking the <HelpIcon sx={{ fontSize: 16, mx: 0.5 }} /> <strong>help icon</strong> in the side menu.
           </Typography>
           <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
             Found a bug? Have a feature request? We'd love to hear from you!
@@ -146,10 +180,10 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
       content: (
         <Box>
           <Typography variant="body1" sx={{ mb: 2 }}>
-            Your <ProfileIcon sx={{ fontSize: 16, mx: 0.5 }} /> **profile** is accessible from the side menu, where you can:
+            Your <ProfileIcon sx={{ fontSize: 16, mx: 0.5 }} /> <strong>profile</strong> is accessible from the side menu, where you can:
           </Typography>
           <Box component="ul" sx={{ pl: 2, mb: 2 }}>
-            <li>View your **free account** status</li>
+            <li>View your <strong>free account</strong> status</li>
             <li>Track usage and features</li>
             <li>Upgrade for additional capabilities</li>
           </Box>
@@ -159,6 +193,63 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
           <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'primary.main' }}>
             Thank you for being part of our journey! 🚀
           </Typography>
+        </Box>
+      )
+    },
+    {
+      title: "🚀 Try Denker Now!",
+      content: (
+        <Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Ready to see Denker in action? Let's create your first conversation and give Denker a task to complete!
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            <strong>Here's a demo request to try:</strong>
+          </Typography>
+          <Paper 
+            sx={{ 
+              p: 2, 
+              bgcolor: 'grey.800', 
+              color: 'grey.100',
+              border: 1, 
+              borderColor: 'grey.600',
+              mb: 2,
+              position: 'relative'
+            }}
+          >
+            <Typography variant="body2" sx={{ fontFamily: 'monospace', lineHeight: 1.5, color: 'inherit' }}>
+              {demoRequest}
+            </Typography>
+            <Button
+              size="small"
+              startIcon={<CopyIcon />}
+              onClick={handleCopyDemo}
+              sx={{ 
+                position: 'absolute', 
+                top: 8, 
+                right: 8,
+                bgcolor: 'grey.700',
+                color: 'grey.100',
+                '&:hover': {
+                  bgcolor: 'grey.600'
+                }
+              }}
+            >
+              Copy
+            </Button>
+          </Paper>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            <strong>To test this:</strong>
+          </Typography>
+          <Box component="ol" sx={{ pl: 2, mb: 2 }}>
+            <li>Click <strong>"Get Started"</strong> to close this dialog</li>
+            <li>Click <AddIcon sx={{ fontSize: 16, mx: 0.5 }} /> <strong>"New Conversation"</strong> in the side menu</li>
+            <li>Paste the demo request above and press Enter</li>
+                         <li>Watch Denker research data and create a report with charts!</li>
+          </Box>
+                     <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'primary.main' }}>
+             This demo showcases Denker's ability to search online, analyze data, and create reports with visualizations automatically.
+           </Typography>
         </Box>
       )
     }
@@ -299,6 +390,21 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
           </Button>
         )}
       </DialogActions>
+
+      <Snackbar
+        open={copySuccess}
+        autoHideDuration={2000}
+        onClose={() => setCopySuccess(false)}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert 
+          onClose={() => setCopySuccess(false)} 
+          severity="success" 
+          sx={{ width: '100%' }}
+        >
+          Demo request copied to clipboard!
+        </Alert>
+      </Snackbar>
     </Dialog>
   );
 };

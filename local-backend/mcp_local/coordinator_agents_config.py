@@ -169,6 +169,21 @@ class AgentSpecificWrapper:
         self._agent_namespace = f"mcp_agent.workflows.llm.augmented_llm_anthropic.{self.agent_name}"
         # --- END ADDED ---
         
+        # ADDED: Override context agent name if base LLM has context
+        if hasattr(self.base_llm, 'context') and self.base_llm.context:
+            try:
+                # Override the SharedCacheLLMAggregator name with the actual agent name
+                if hasattr(self.base_llm.context, 'agent_name'):
+                    original_agent_name = getattr(self.base_llm.context, 'agent_name', 'Unknown')
+                    self.base_llm.context.agent_name = self.agent_name
+                    logger.debug(f"AgentSpecificWrapper: Overrode context agent_name from '{original_agent_name}' to '{self.agent_name}'")
+                else:
+                    setattr(self.base_llm.context, 'agent_name', self.agent_name)
+                    logger.debug(f"AgentSpecificWrapper: Set context agent_name to '{self.agent_name}'")
+            except Exception as e:
+                logger.warning(f"AgentSpecificWrapper: Failed to override context agent_name for '{self.agent_name}': {e}")
+        # --- END ADDED ---
+        
         logger.debug(f"AgentSpecificWrapper created for '{agent_name}' with instruction: {agent_instruction[:100]}...")
         
         # FIXED: Set the instruction property that the base LLM will use
@@ -378,6 +393,19 @@ class AgentSpecificWrapper:
             logger.debug(f"AgentSpecificWrapper.generate_str called for '{self.agent_name}' with message type: {type(message)}")
             processed_messages = self._prepare_messages_for_agent(message)
             
+            # ADDED: Ensure context agent name is properly set before each call
+            if hasattr(self.base_llm, 'context') and self.base_llm.context:
+                try:
+                    # Re-inject agent name in case context was reset
+                    if hasattr(self.base_llm.context, 'agent_name'):
+                        self.base_llm.context.agent_name = self.agent_name
+                    else:
+                        setattr(self.base_llm.context, 'agent_name', self.agent_name)
+                    logger.debug(f"AgentSpecificWrapper.generate_str: Ensured context agent_name='{self.agent_name}'")
+                except Exception as e:
+                    logger.warning(f"AgentSpecificWrapper.generate_str: Failed to set context agent_name for '{self.agent_name}': {e}")
+            # --- END ADDED ---
+            
             # MODIFIED: Override logger with wrapper that injects context
             original_logger = getattr(self.base_llm, 'logger', None)
             if original_logger:
@@ -506,6 +534,19 @@ class AgentSpecificWrapper:
         try:
             logger.debug(f"AgentSpecificWrapper.generate_structured called for '{self.agent_name}'")
             processed_messages = self._prepare_messages_for_agent(message)
+            
+            # ADDED: Ensure context agent name is properly set before each call
+            if hasattr(self.base_llm, 'context') and self.base_llm.context:
+                try:
+                    # Re-inject agent name in case context was reset
+                    if hasattr(self.base_llm.context, 'agent_name'):
+                        self.base_llm.context.agent_name = self.agent_name
+                    else:
+                        setattr(self.base_llm.context, 'agent_name', self.agent_name)
+                    logger.debug(f"AgentSpecificWrapper.generate_structured: Ensured context agent_name='{self.agent_name}'")
+                except Exception as e:
+                    logger.warning(f"AgentSpecificWrapper.generate_structured: Failed to set context agent_name for '{self.agent_name}': {e}")
+            # --- END ADDED ---
             
             # MODIFIED: Override logger with wrapper that injects context
             original_logger = getattr(self.base_llm, 'logger', None)
@@ -734,7 +775,7 @@ class AgentConfiguration:
 
                 **MANDATORY WORKFLOW - ALWAYS FOLLOW THIS SEQUENCE:**
                 1. **Create content in workspace**: Use markdown-editor to create content in workspace (e.g., report.md)
-                2. **ALWAYS show live preview FIRST**: Use `markdown-editor.live_preview` to display the content to user
+                2. **🚨 CRITICAL: ALWAYS show live preview FIRST** 🚨: Use `markdown-editor.live_preview` to display the content to user - THIS IS MANDATORY, NEVER SKIP
                 3. **Convert directly to user location**: Use `markdown-editor.convert_from_md` with destination path to convert directly to user's preferred format and location
                 4. **ALWAYS provide ABSOLUTE PATH**: Always provide the complete absolute path of the final file
 
@@ -758,7 +799,7 @@ class AgentConfiguration:
                 ✅ Create basic document structure (headers, sections, paragraphs)
                 ✅ Incorporate provided citations and sources appropriately
                 ✅ Add charts/visuals when explicitly requested by user
-                ✅ **ALWAYS use markdown-editor.live_preview to show final content to user BEFORE converting**
+                ✅ **🚨 CRITICAL: ALWAYS use markdown-editor.live_preview to show final content to user BEFORE converting** 🚨
                 ✅ Use markdown-editor.convert_from_md to convert directly to user's preferred format and location
                 ✅ **ALWAYS provide the complete absolute path of the final file**
 
@@ -768,7 +809,7 @@ class AgentConfiguration:
                 ❌ Fact-checking or verification (trust provided research)
                 ❌ Format optimization or professional styling
                 ❌ Try to edit files outside workspace (security violation)
-                ❌ Skip live preview step (MANDATORY requirement)
+                ❌ Skip live preview step (🚨 ABSOLUTELY FORBIDDEN - MANDATORY requirement 🚨)
                 ❌ Use filesystem.move_file (outdated - convert_from_md handles destination directly)
 
                 **Writing Standards:**
@@ -778,8 +819,8 @@ class AgentConfiguration:
                 • Include citations from provided research
                 • Focus on content creation, not perfection
 
-                **MANDATORY Final Steps - NEVER SKIP:**
-                1. **ALWAYS use `markdown-editor.live_preview`** to show your written content to the user
+                **🚨 MANDATORY Final Steps - NEVER SKIP:** 🚨
+                1. **🚨 CRITICAL: ALWAYS use `markdown-editor.live_preview`** 🚨 to show your written content to the user
                 2. **Then use `markdown-editor.convert_from_md`** with destination path to convert directly to user's preferred format and location
                 3. **ALWAYS provide the complete absolute path** of the final file (e.g., `/Users/username/Downloads/report.docx`)""",
                 "server_names": ["filesystem", "markdown-editor"],
@@ -812,7 +853,7 @@ class AgentConfiguration:
                 1. You: Copy `Desktop/report.docx` → `/tmp/denker_workspace/default/report.docx` using filesystem
                 2. You: Convert to `/tmp/denker_workspace/default/report.md` using markdown-editor
                 3. You: Edit content in `/tmp/denker_workspace/default/report.md`
-                4. You: **MANDATORY** - Use `markdown-editor.live_preview` to show edited results to user
+                4. You: **🚨 MANDATORY - NEVER SKIP** 🚨 - Use `markdown-editor.live_preview` to show edited results to user
                 5. You: Convert directly: `markdown-editor.convert_from_md(source="/tmp/denker_workspace/default/report.md", output_format="docx", destination="/Users/username/Downloads/report.docx")`
                 6. You: **ALWAYS provide ABSOLUTE PATH**: "Edited file saved to: `/Users/username/Downloads/report.docx`"
 
@@ -830,7 +871,7 @@ class AgentConfiguration:
                 ✅ Enhance professional presentation
                 ✅ Format citations and references properly
                 ✅ Ensure consistency in style and terminology
-                ✅ **ALWAYS use markdown-editor.live_preview to show edited content to user BEFORE converting**
+                ✅ **🚨 CRITICAL: ALWAYS use markdown-editor.live_preview to show edited content to user BEFORE converting** 🚨
                 ✅ Use markdown-editor.convert_from_md to convert directly to user's preferred format and location
                 ✅ **ALWAYS provide the complete absolute path of the final file**
 
@@ -839,7 +880,7 @@ class AgentConfiguration:
                 ❌ Major content rewrites (focus on editing, not rewriting)
                 ❌ Change the core message or meaning
                 ❌ Try to edit files outside workspace (security violation)
-                ❌ Skip live preview step (MANDATORY requirement)
+                ❌ Skip live preview step (🚨 ABSOLUTELY FORBIDDEN - MANDATORY requirement 🚨)
                 ❌ Use filesystem.move_file (outdated - convert_from_md handles destination directly)
 
                 **Editing Standards:**
@@ -851,8 +892,8 @@ class AgentConfiguration:
                 • Focus on clarity, professionalism, and accuracy
                 • Sometimes the creator's work is fine as-is
 
-                **MANDATORY Final Steps - NEVER SKIP:**
-                1. **ALWAYS use `markdown-editor.live_preview`** to show edited content, highlighting key improvements made
+                **🚨 MANDATORY Final Steps - NEVER SKIP:** 🚨
+                1. **🚨 CRITICAL: ALWAYS use `markdown-editor.live_preview`** 🚨 to show edited content, highlighting key improvements made
                 2. **Then use `markdown-editor.convert_from_md`** with destination path to convert directly to user's preferred format and location
                 3. **ALWAYS provide the complete absolute path** of the final file (e.g., `/Users/username/Downloads/edited_report.docx`)""",
                 "server_names": ["filesystem", "markdown-editor", "fetch", "websearch", "qdrant"],

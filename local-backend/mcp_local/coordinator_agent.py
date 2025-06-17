@@ -17,6 +17,7 @@ import re
 from pathlib import Path
 import traceback
 import time
+import hashlib
 
 import aiohttp
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends, HTTPException
@@ -240,11 +241,6 @@ class SemaphoreGuardedLLM:
             llm_name = getattr(self._llm, 'name', 'UnknownLLM')
             logger.debug(f"Semaphore acquired for structured LLM call by {llm_name}")
             try:
-                # --- COMMENTED OUT: Unconditional Proactive Delay --- 
-                # logger.debug(f"Applying 0.5s proactive delay before calling {llm_name}.generate_structured")
-                # await asyncio.sleep(0.5)
-                # --- END COMMENTED OUT ---
-                
                 # Delegate the actual call to the wrapped LLM instance
                 if hasattr(self._llm, 'generate_structured'):
                     # Call helper method which includes tenacity retry logic
@@ -662,6 +658,20 @@ class CoordinatorAgent:
                 kwargs['instruction'] = self.agent_config.agent_configs[agent_name_for_config_lookup]['instruction']
         
         print(f"[_create_anthropic_llm] DEBUG: Initial agent_name_for_config_lookup: {agent_name_for_config_lookup}")
+
+        # --- ADDED: Inject agent name into context for event emission ---
+        if agent_name_for_config_lookup and 'context' in kwargs and kwargs['context']:
+            try:
+                # Set agent name in context for proper identification throughout the execution
+                if hasattr(kwargs['context'], 'agent_name'):
+                    kwargs['context'].agent_name = agent_name_for_config_lookup
+                else:
+                    setattr(kwargs['context'], 'agent_name', agent_name_for_config_lookup)
+                
+                logger.info(f"Injected agent_name='{agent_name_for_config_lookup}' into context for LLM creation")
+            except Exception as e:
+                logger.warning(f"Failed to inject agent_name into context: {e}")
+        # --- END ADDED ---
 
         # --- ADDED: Check cache first ---
         if agent_name_for_config_lookup and agent_name_for_config_lookup in self.agent_llm_cache:
@@ -2095,28 +2105,47 @@ class CoordinatorAgent:
 
 # --- ADDED: Fixed Anthropic LLM Subclass ---
 class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
-    """Subclass to fix the generate method's check for stop_reason and add prompt caching."""
+    """Enhanced version with plan completion parsing and caching optimizations."""
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Enable prompt caching by default
-        self._enable_prompt_caching = kwargs.pop("enable_prompt_caching", True)
-        self._cache_workflow_context = kwargs.pop("cache_workflow_context", True)
-        # Use 1-hour cache for long-running workflows (beta feature)
-        self._use_long_cache_for_workflows = kwargs.pop("use_long_cache_for_workflows", False) # MODIFIED: Default to False for 5-min cache
-
-        # --- ADDED: Explicitly enable caching for tools and system prompt by default ---
-        self.cache_tools = kwargs.pop("cache_tools", True)
-        self.cache_system_prompt = kwargs.pop("cache_system_prompt", True)
         
-        # --- FIXED: Safe logger access after parent initialization ---
-        if hasattr(self, 'logger') and self.logger:
-            self.logger.info(f"[FixedAnthropicAugmentedLLM] Initialized with cache_tools={self.cache_tools}, cache_system_prompt={self.cache_system_prompt}")
-        else:
-            # Fallback to module logger if instance logger not available
-            logger.info(f"[FixedAnthropicAugmentedLLM] Initialized with cache_tools={self.cache_tools}, cache_system_prompt={self.cache_system_prompt}")
-        # --- END FIXED ---
-    
+        # Enhanced caching configuration
+        self._enable_prompt_caching = True  # Enable by default
+        self._use_long_cache_for_workflows = True  # Use 1-hour cache for long workflows
+        self._enable_automatic_cache_management = True  # Automatically determine cache strategy
+        
+        # --- ADDED: Missing cache control attributes ---
+        self._cache_control_types = ["ephemeral", "persistent"] # Add supported cache types
+        self._default_cache_control = "ephemeral"  # Set default cache control type
+
+    def _get_context_info(self) -> tuple[Optional[str], Optional[str]]:
+        """
+        Get agent name and workflow type from context if available.
+        
+        Returns:
+            tuple: (agent_name, workflow_type) or (None, None) if not available
+        """
+        agent_name = None
+        workflow_type = None
+        
+        try:
+            if hasattr(self, 'context') and self.context:
+                # Get agent name from context
+                if hasattr(self.context, 'agent_name'):
+                    agent_name = getattr(self.context, 'agent_name', None)
+                
+                # Get workflow type from context
+                if hasattr(self.context, 'workflow_type'):
+                    workflow_type = getattr(self.context, 'workflow_type', None)
+                    
+                if agent_name or workflow_type:
+                    self.logger.debug(f"[FixedAnthropicAugmentedLLM] Context info - Agent: {agent_name}, Workflow: {workflow_type}")
+        except Exception as e:
+            self.logger.warning(f"[FixedAnthropicAugmentedLLM] Failed to get context info: {e}")
+        
+        return agent_name, workflow_type
+
     async def generate_structured(
         self,
         message,
@@ -2128,53 +2157,48 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         1. Circuit breaker protection for the instructor API call
         2. Plan completion parsing fix to prevent premature completion
         """
+        # Get context information for logging/debugging
+        agent_name, workflow_type = self._get_context_info()
+        context_info = f"[Agent: {agent_name or 'Unknown'}] [Workflow: {workflow_type or 'Unknown'}]"
+        
         # Check if this is a Plan model by looking for is_complete field
         is_plan_model = hasattr(response_model, '__annotations__') and 'is_complete' in response_model.__annotations__
         
         # Check circuit breaker before proceeding
         if _overload_circuit_breaker.is_overloaded():
-            self.logger.error("[FixedAnthropicAugmentedLLM.generate_structured] Circuit breaker is tripped - service overloaded. Aborting structured generation.")
-            raise Exception("Service is currently overloaded (circuit breaker tripped). Please try again later.")
-        
-        # First we invoke the LLM to generate a string response
-        # We need to do this in a two-step process because Instructor doesn't
-        # know how to invoke MCP tools via call_tool, so we'll handle all the
-        # processing first and then pass the final response through Instructor
-        import instructor
+            self.logger.error(f"[FixedAnthropicAugmentedLLM.generate_structured] {context_info} Circuit breaker is tripped - service overloaded. Aborting structured generation.")
+            raise Exception("Service is currently overloaded. Please try again later.")
 
         try:
-            response = await self.generate_str(
-                message=message,
-                request_params=request_params,
-            )
+            # First step: generate natural language response using parent method
+            # This will handle all the caching, tool calling, and general generation logic
+            self.logger.debug(f"[FixedAnthropicAugmentedLLM.generate_structured] {context_info} Starting generate_str for structured parsing...")
+            response = await self.generate_str(message, request_params)
+            
+            # Log for debugging with context
+            self.logger.debug(f"[FixedAnthropicAugmentedLLM.generate_structured] {context_info} Got response from generate_str: {response[:100]}...")
         except Exception as e:
             # Check if this is an OverloadedError (529 error) from the first call
             if "OverloadedError" in str(type(e)) or "OverloadedError" in str(e) or "529" in str(e) or "overloaded" in str(e).lower():
-                self.logger.error(f"[FixedAnthropicAugmentedLLM.generate_structured] 529 error during generate_str. Circuit breaker already tripped. Error: {e}")
+                self.logger.error(f"[FixedAnthropicAugmentedLLM.generate_structured] {context_info} 529 error during generate_str. Circuit breaker already tripped. Error: {e}")
                 raise Exception(f"Service is currently overloaded. Please try again later. Original error: {str(e)}")
             else:
                 raise
 
-        # Check circuit breaker again before the second API call
-        if _overload_circuit_breaker.is_overloaded():
-            self.logger.error("[FixedAnthropicAugmentedLLM.generate_structured] Circuit breaker tripped after generate_str, aborting instructor call.")
-            raise Exception("Service is currently overloaded (circuit breaker tripped). Please try again later.")
-
-        # Next we pass the text through instructor to extract structured data
         try:
-            # Safely access API key from config, allow fallback to environment variable
-            anthropic_api_key_from_config = None
-            if self.context and self.context.config and hasattr(self.context.config, 'anthropic') and self.context.config.anthropic and hasattr(self.context.config.anthropic, 'api_key'):
-                anthropic_api_key_from_config = self.context.config.anthropic.api_key
-
+            # Next we pass the text through instructor to extract structured data
+            # Using the exact same pattern as the official mcp-agent implementation
+            import instructor
+            from anthropic import Anthropic
+            
             client = instructor.from_anthropic(
-                Anthropic(api_key=anthropic_api_key_from_config),
+                Anthropic(api_key=self.context.config.anthropic.api_key),
             )
 
             params = self.get_request_params(request_params)
             model = await self.select_model(params)
 
-            # Extract structured data from natural language - THIS IS THE SECOND API CALL
+            # Extract structured data from natural language
             structured_response = client.chat.completions.create(
                 model=model,
                 response_model=response_model,
@@ -2182,33 +2206,43 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                 max_tokens=params.maxTokens,
             )
 
-            # --- ADDED: Plan completion parsing fix ---
+            # --- SIMPLIFIED: Basic completion detection ---
             if is_plan_model and hasattr(structured_response, 'is_complete'):
-                # Log the original completion status for debugging
+                # Extract the message content to analyze plan state
+                message_content = ""
+                if isinstance(message, str):
+                    message_content = message
+                elif isinstance(message, list) and len(message) > 0:
+                    # Handle list of messages - get the latest user message content
+                    for msg in reversed(message):
+                        if isinstance(msg, dict) and msg.get('role') == 'user':
+                            content = msg.get('content', '')
+                            if isinstance(content, list) and len(content) > 0:
+                                # Handle anthropic-style message format
+                                for item in content:
+                                    if isinstance(item, dict) and item.get('type') == 'text':
+                                        message_content = item.get('text', '')
+                                        break
+                            elif isinstance(content, str):
+                                message_content = content
+                            break
+                
+                # Log the original completion status
                 original_completion = getattr(structured_response, 'is_complete', None)
-                if original_completion is True:
-                    self.logger.warning(f"[FixedAnthropicAugmentedLLM] Plan was marked complete: {original_completion}. Checking if this is appropriate...")
-                    
-                    # Check if there are any actual steps with meaningful content
-                    has_meaningful_steps = False
-                    if hasattr(structured_response, 'steps') and structured_response.steps:
-                        for step in structured_response.steps:
-                            if hasattr(step, 'description') and step.description:
-                                # Check if this is not just a generic/template step
-                                generic_patterns = ["process the query", "complete research", "research and respond"]
-                                step_desc = step.description.lower()
-                                if not any(pattern in step_desc for pattern in generic_patterns):
-                                    has_meaningful_steps = True
-                                    break
-                    
-                    # Only allow completion if we have meaningful steps 
-                    if not has_meaningful_steps:
-                        self.logger.warning("[FixedAnthropicAugmentedLLM] Plan marked complete but has no meaningful steps. Forcing is_complete=False")
-                        # Create a new instance with corrected completion status
-                        result_dict = structured_response.model_dump()
-                        result_dict['is_complete'] = False
-                        structured_response = response_model(**result_dict)
-            # --- END ADDED ---
+                self.logger.info(f"[FixedAnthropicAugmentedLLM] Plan completion analysis - Original: {original_completion}")
+                
+                # SIMPLIFIED COMPLETION LOGIC: 
+                # Only block completion if "No steps executed yet" is present (the original issue)
+                no_steps_executed = "No steps executed yet" in message_content
+                
+                if no_steps_executed and original_completion is True:
+                    self.logger.warning(f"[FixedAnthropicAugmentedLLM] Blocking inappropriate completion - No steps executed yet but planner marked complete")
+                    structured_response.is_complete = False
+                else:
+                    # Trust the planner's decision when steps have been executed
+                    self.logger.info(f"[FixedAnthropicAugmentedLLM] Trusting planner decision: {original_completion}")
+                
+                self.logger.info(f"[FixedAnthropicAugmentedLLM] Final completion status: {structured_response.is_complete}")
 
             return structured_response
             

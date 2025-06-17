@@ -133,14 +133,18 @@ $Context$: {context_description}
     ]
 }}
 
-IMPORTANT:
-- Response must be valid JSON
-- Include exactly 3 options, but have to be three different actions
-- Use numbers 1,2,3 as IDs
-- Each option must have id, title, and description
-- Short actionable titles, not too long but with key context
-- Complete context in descriptions
-- Do not include any text before or after the JSON"""
+CRITICAL JSON REQUIREMENTS:
+- Response MUST be valid JSON with proper syntax
+- Include EXACTLY 3 options, each with different actions
+- Use string IDs "1", "2", "3" (in quotes)
+- Each option MUST have "id", "title", and "description" fields
+- All strings MUST be properly quoted with double quotes
+- All commas MUST be present between array elements and object properties
+- NO trailing commas allowed
+- NO text before or after the JSON object
+- Ensure all JSON brackets and braces are properly closed
+- Short actionable titles with key context
+- Complete context in descriptions"""
     
         return prompt
         
@@ -163,36 +167,157 @@ IMPORTANT:
             # Log the JSON string for debugging
             self.logger.debug(f"Attempting to parse JSON: {json_str}")
             
-            # Parse JSON
-            data = json.loads(json_str)
+            # Try multiple JSON parsing strategies
+            data = None
+            parsing_errors = []
+            
+            # Strategy 1: Direct parsing
+            try:
+                data = json.loads(json_str)
+            except json.JSONDecodeError as e:
+                parsing_errors.append(f"Direct parsing failed: {e}")
+                
+                # Strategy 2: Try to fix common JSON issues
+                try:
+                    # Fix common issues: missing commas, trailing commas, etc.
+                    fixed_json = self._fix_common_json_issues(json_str)
+                    self.logger.debug(f"Trying fixed JSON: {fixed_json}")
+                    data = json.loads(fixed_json)
+                except json.JSONDecodeError as e2:
+                    parsing_errors.append(f"Fixed JSON parsing failed: {e2}")
+                    
+                    # Strategy 3: Extract structured data manually if possible
+                    try:
+                        data = self._extract_options_manually(json_str)
+                        if data:
+                            self.logger.info("Successfully extracted options manually")
+                    except Exception as e3:
+                        parsing_errors.append(f"Manual extraction failed: {e3}")
+            
+            if data is None:
+                error_msg = "All JSON parsing strategies failed. Errors: " + "; ".join(parsing_errors)
+                self.logger.error(error_msg)
+                self.logger.error(f"Original response: {response}")
+                # Return default options instead of failing completely
+                return self._get_fallback_options(response)
             
             # Validate structure
             if not isinstance(data, dict) or 'options' not in data:
-                raise ValueError("Invalid response structure: missing 'options' key")
+                self.logger.warning("Invalid response structure: missing 'options' key, trying fallback")
+                return self._get_fallback_options(response)
             
             options = data['options']
             if not isinstance(options, list):
-                raise ValueError("Invalid response structure: 'options' must be a list")
+                self.logger.warning("Invalid response structure: 'options' must be a list, trying fallback")
+                return self._get_fallback_options(response)
             
             if len(options) != 3:
-                raise ValueError(f"Invalid number of options: expected 3, got {len(options)}")
+                self.logger.warning(f"Invalid number of options: expected 3, got {len(options)}, trying to adjust")
+                # Try to adjust the options to exactly 3
+                if len(options) > 3:
+                    options = options[:3]
+                elif len(options) < 3:
+                    # Add default options to reach 3
+                    while len(options) < 3:
+                        options.append({
+                            "id": str(len(options) + 1),
+                            "title": "General Assistance",
+                            "description": "Get help with your current task"
+                        })
             
-            # Validate each option
+            # Validate and fix each option
             for i, option in enumerate(options, 1):
                 if not isinstance(option, dict):
-                    raise ValueError(f"Option {i} must be a dictionary")
-                if 'id' not in option or 'title' not in option or 'description' not in option:
-                    raise ValueError(f"Option {i} missing required fields: id, title, or description")
-                if str(option['id']) != str(i):
-                    raise ValueError(f"Option {i} has incorrect ID: {option['id']}")
+                    self.logger.warning(f"Option {i} is not a dictionary, fixing...")
+                    option = {"id": str(i), "title": "General Help", "description": "Get assistance with your task"}
+                    options[i-1] = option
+                
+                # Ensure required fields exist
+                if 'id' not in option:
+                    option['id'] = str(i)
+                if 'title' not in option:
+                    option['title'] = "General Help"
+                if 'description' not in option:
+                    option['description'] = "Get assistance with your current task"
+                
+                # Fix ID to match expected sequence
+                option['id'] = str(i)
             
             return options
             
-        except json.JSONDecodeError as e:
-            self.logger.error(f"JSON parsing error: {str(e)}")
-            self.logger.error(f"Response text: {response}")
-            raise
         except Exception as e:
-            self.logger.error(f"Error parsing options: {str(e)}")
+            self.logger.error(f"Unexpected error parsing options: {str(e)}")
             self.logger.error(f"Response text: {response}")
-            raise
+            self.logger.error(traceback.format_exc())
+            # Return fallback options instead of failing
+            return self._get_fallback_options(response)
+
+    def _fix_common_json_issues(self, json_str: str) -> str:
+        """Try to fix common JSON formatting issues."""
+        import re
+        
+        # Remove any text before the first { and after the last }
+        start = json_str.find('{')
+        end = json_str.rfind('}') + 1
+        if start != -1 and end > start:
+            json_str = json_str[start:end]
+        
+        # Fix missing commas between objects/arrays
+        # This is a simple heuristic - look for patterns like }"{ or ]"{ and add commas
+        json_str = re.sub(r'}\s*"', '},\n"', json_str)
+        json_str = re.sub(r']\s*"', '],\n"', json_str)
+        
+        # Remove trailing commas before closing brackets
+        json_str = re.sub(r',\s*}', '}', json_str)
+        json_str = re.sub(r',\s*]', ']', json_str)
+        
+        return json_str
+
+    def _extract_options_manually(self, json_str: str) -> Optional[Dict]:
+        """Try to extract options manually from malformed JSON."""
+        import re
+        
+        # Try to find option patterns manually
+        options = []
+        
+        # Look for id, title, description patterns
+        option_pattern = r'"id":\s*"(\d+)".*?"title":\s*"([^"]*)".*?"description":\s*"([^"]*)"'
+        matches = re.findall(option_pattern, json_str, re.DOTALL)
+        
+        for match in matches:
+            id_val, title, description = match
+            options.append({
+                "id": id_val,
+                "title": title.strip(),
+                "description": description.strip()
+            })
+        
+        if len(options) > 0:
+            return {"options": options}
+        
+        return None
+
+    def _get_fallback_options(self, response: str) -> List[dict]:
+        """Return fallback options when JSON parsing fails completely."""
+        self.logger.info("Using fallback options due to parsing failure")
+        
+        # Try to extract any meaningful text from the response for context
+        response_preview = response[:200] if response else ""
+        
+        return [
+            {
+                "id": "1",
+                "title": "Search",
+                "description": "Search for information related to your selected content or current context"
+            },
+            {
+                "id": "2", 
+                "title": "Explain",
+                "description": "Get a detailed explanation of the selected content or what's shown in your screenshot"
+            },
+            {
+                "id": "3",
+                "title": "Save", 
+                "description": "Save the current content to qdrant database"
+            }
+        ]
