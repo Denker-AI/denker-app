@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { CircularProgress } from '@mui/material';
 import { api } from '../services/api';
 import { LoadingScreen } from '../components/Common';
@@ -43,8 +43,8 @@ interface AuthProviderProps {
 
 // Create the provider component
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const location = useLocation();
-  const isSubWindow = location.pathname === '/subwindow';
+  // Check if current path is subwindow using window.location
+  const isSubWindow = window.location.hash === '#/subwindow';
   
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(!isSubWindow); // Skip loading for subwindow
