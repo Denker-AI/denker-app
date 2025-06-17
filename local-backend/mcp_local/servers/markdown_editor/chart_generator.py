@@ -397,13 +397,41 @@ class ChartGenerator:
                     
                     chart_data = await response.read()
                     
-                    # Save chart to workspace
-                    with open(chart_path, 'wb') as f:
-                        f.write(chart_data)
+                    # Validate that we received actual image data
+                    if len(chart_data) < 1000:  # Very small response is likely an error
+                        raise Exception(f"Received suspiciously small chart data: {len(chart_data)} bytes")
                     
-                    # Validate the created image
+                    # Validate PNG header (first 8 bytes should be PNG signature)
+                    png_signature = b'\x89PNG\r\n\x1a\n'
+                    if not chart_data.startswith(png_signature):
+                        raise Exception("Received data is not a valid PNG file (missing PNG signature)")
+                    
+                    # Save chart to workspace with proper error handling
+                    try:
+                        # Use atomic write: write to temp file first, then rename
+                        temp_path = chart_path + '.tmp'
+                        with open(temp_path, 'wb') as f:
+                            f.write(chart_data)
+                            f.flush()  # Force write to disk
+                            os.fsync(f.fileno())  # Ensure data is written to storage
+                        
+                        # Atomic rename (this should be atomic on most filesystems)
+                        os.rename(temp_path, chart_path)
+                        
+                        logger.info(f"Successfully wrote PNG chart: {chart_path} ({len(chart_data)} bytes)")
+                        
+                    except Exception as write_error:
+                        # Clean up temp file if it exists
+                        if os.path.exists(temp_path):
+                            try:
+                                os.remove(temp_path)
+                            except:
+                                pass
+                        raise Exception(f"Failed to write PNG file: {write_error}")
+                    
+                    # Validate the created image file
                     chart_type = chart_config.get('type', 'unknown')
-                    validation = validate_image_file(chart_path, min_size_bytes=3000, chart_type=chart_type)
+                    validation = validate_image_file(chart_path, min_size_bytes=1000, chart_type=chart_type)
                     if not validation['valid']:
                         # Remove the invalid file
                         try:
@@ -411,11 +439,13 @@ class ChartGenerator:
                         except:
                             pass
                         
+                        logger.error(f"Chart validation failed: {validation['error']}")
                         return {
                             'success': False,
                             'error': f"Chart creation failed validation: {validation['error']}",
                             'validation_details': validation,
-                            'chart_data_size': len(chart_data)
+                            'chart_data_size': len(chart_data),
+                            'png_signature_valid': chart_data.startswith(png_signature)
                         }
                     
                     # Register file in workspace

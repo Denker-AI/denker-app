@@ -1519,6 +1519,14 @@ class CoordinatorAgent:
             # Clean up the response: strip markdown code block markers if present
             cleaned_response = raw_response.strip()
             
+            # Log the raw response for debugging
+            logger.debug(f"[{query_id}] Raw decision response: {raw_response}")
+            
+            # Handle empty responses
+            if not cleaned_response:
+                logger.error(f"[{query_id}] Empty decision response received")
+                return self._create_default_decision("Empty response received")
+            
             # Handle markdown code blocks (```json or ```)
             if "```" in cleaned_response:
                 # Find content between first and last ``` markers
@@ -1543,8 +1551,53 @@ class CoordinatorAgent:
                     if cleaned_response.endswith("```"):
                         cleaned_response = cleaned_response[:-3].strip()
             
+            # Additional cleanup: remove any leading/trailing non-JSON content
+            cleaned_response = cleaned_response.strip()
+            
+            # Try to find JSON-like content if the response doesn't start with {
+            if not cleaned_response.startswith('{'):
+                # Look for the first { and last } in the response
+                start_brace = cleaned_response.find('{')
+                end_brace = cleaned_response.rfind('}')
+                
+                if start_brace != -1 and end_brace != -1 and end_brace > start_brace:
+                    json_content = cleaned_response[start_brace:end_brace + 1]
+                    logger.debug(f"[{query_id}] Extracted JSON from mixed content: {json_content}")
+                    cleaned_response = json_content
+                else:
+                    logger.error(f"[{query_id}] No JSON object found in response: {cleaned_response[:200]}...")
+                    return self._create_default_decision(f"No JSON object found in response: {cleaned_response[:100]}...")
+            
+            # Log the cleaned response for debugging
+            logger.debug(f"[{query_id}] Cleaned decision response: {cleaned_response}")
+            
             # Parse JSON
-            decision_data = json.loads(cleaned_response)
+            try:
+                decision_data = json.loads(cleaned_response)
+            except json.JSONDecodeError as json_error:
+                # Try to fix common JSON issues
+                # 1. Missing closing braces
+                if cleaned_response.count('{') > cleaned_response.count('}'):
+                    missing_braces = cleaned_response.count('{') - cleaned_response.count('}')
+                    fixed_response = cleaned_response + '}' * missing_braces
+                    logger.warning(f"[{query_id}] Attempting to fix missing closing braces: added {missing_braces} braces")
+                    try:
+                        decision_data = json.loads(fixed_response)
+                        logger.info(f"[{query_id}] Successfully fixed JSON with missing braces")
+                    except json.JSONDecodeError:
+                        raise json_error  # Use original error
+                # 2. Trailing commas
+                elif ',}' in cleaned_response or ',]' in cleaned_response:
+                    fixed_response = cleaned_response.replace(',}', '}').replace(',]', ']')
+                    logger.warning(f"[{query_id}] Attempting to fix trailing commas")
+                    try:
+                        decision_data = json.loads(fixed_response)
+                        logger.info(f"[{query_id}] Successfully fixed JSON with trailing commas")
+                    except json.JSONDecodeError:
+                        raise json_error  # Use original error
+                else:
+                    raise json_error  # Re-raise original error
+                
             logger.info(f"[{query_id}] Successfully parsed decision JSON: {decision_data}")
             
             # Validate required fields
@@ -1572,7 +1625,8 @@ class CoordinatorAgent:
             
         except json.JSONDecodeError as e:
             logger.error(f"[{query_id}] Failed to parse decision JSON: {e}")
-            logger.error(f"[{query_id}] Raw response: {raw_response}")
+            logger.error(f"[{query_id}] Raw response (first 500 chars): {raw_response[:500]}")
+            logger.error(f"[{query_id}] Cleaned response: {cleaned_response[:500] if 'cleaned_response' in locals() else 'N/A'}")
             return self._create_default_decision(f"JSON parsing failed: {str(e)}")
         except ValueError as e:
             logger.error(f"[{query_id}] Invalid decision data: {e}")
@@ -2233,22 +2287,12 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                                 message_content = content
                             break
                 
-                # Log the original completion status
+                # Log the original completion status for debugging
                 original_completion = getattr(structured_response, 'is_complete', None)
-                self.logger.info(f"[FixedAnthropicAugmentedLLM] Plan completion analysis - Original: {original_completion}")
+                self.logger.info(f"[FixedAnthropicAugmentedLLM] Plan completion - Trusting planner decision: {original_completion}")
                 
-                # SIMPLIFIED COMPLETION LOGIC: 
-                # Only block completion if "No steps executed yet" is present (the original issue)
-                no_steps_executed = "No steps executed yet" in message_content
-                
-                if no_steps_executed and original_completion is True:
-                    self.logger.warning(f"[FixedAnthropicAugmentedLLM] Blocking inappropriate completion - No steps executed yet but planner marked complete")
-                    structured_response.is_complete = False
-                else:
-                    # Trust the planner's decision when steps have been executed
-                    self.logger.info(f"[FixedAnthropicAugmentedLLM] Trusting planner decision: {original_completion}")
-                
-                self.logger.info(f"[FixedAnthropicAugmentedLLM] Final completion status: {structured_response.is_complete}")
+                # Let the orchestrator planner make the completion decision
+                # The StrictOrchestrator prompt handles completion logic properly
 
             return structured_response
             
@@ -2270,7 +2314,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                                 "agent": "researcher"
                             }]
                         }],
-                        'is_complete': False  # ALWAYS default to False for safety
+                        'is_complete': False  # Default to False to allow execution
                     }
                     return response_model(**default_plan_data)
                 # --- END ADDED ---

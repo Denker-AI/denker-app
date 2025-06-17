@@ -252,16 +252,14 @@ def preview_markdown(file_path: str, format: str = "html") -> Dict[str, Any]:
         }
 
 class LivePreviewHandler(BaseHTTPRequestHandler):
-    """HTTP request handler for the live preview server."""
+    """HTTP request handler for live markdown preview with image support."""
     
-    def __init__(self, *args, markdown_file=None, **kwargs):
-        self.markdown_file = markdown_file
-        # Call the parent class constructor
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
     
     def log_message(self, format, *args):
         # Redirect logs to the logger
-        logger.info(format % args)
+        logger.debug(f"[LivePreview] {format % args}")
     
     def do_GET(self):
         """Handle GET requests."""
@@ -270,6 +268,97 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
             self.send_header('Content-type', 'text/html')
             self.end_headers()
             
+            # Check if this is an image-only preview
+            if hasattr(self.server, 'is_image_file') and self.server.is_image_file:
+                # Serve image-only preview
+                filename = os.path.basename(self.server.markdown_file)
+                
+                # Determine content type
+                file_ext = os.path.splitext(filename)[1].lower()
+                content_type_map = {
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif',
+                    '.svg': 'image/svg+xml',
+                    '.webp': 'image/webp'
+                }
+                content_type = content_type_map.get(file_ext, 'image/png')
+                
+                html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Image Preview - {filename}</title>
+                    <style>
+                        body {{
+                            margin: 0;
+                            padding: 20px;
+                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+                            background-color: #f5f5f5;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            justify-content: center;
+                            min-height: 100vh;
+                        }}
+                        .image-container {{
+                            background: white;
+                            padding: 20px;
+                            border-radius: 8px;
+                            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                            max-width: 90vw;
+                            max-height: 80vh;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                        }}
+                        .image-title {{
+                            margin-bottom: 20px;
+                            font-size: 18px;
+                            font-weight: 600;
+                            color: #333;
+                        }}
+                        img {{
+                            max-width: 100%;
+                            max-height: 70vh;
+                            object-fit: contain;
+                            border-radius: 4px;
+                        }}
+                        .image-info {{
+                            margin-top: 15px;
+                            font-size: 14px;
+                            color: #666;
+                            text-align: center;
+                        }}
+                    </style>
+                </head>
+                <body>
+                    <div class="image-container">
+                        <div class="image-title">{filename}</div>
+                        <img src="/direct-image" alt="{filename}" id="main-image" />
+                        <div class="image-info">
+                            <p>File: {filename}</p>
+                            <p>Type: {content_type}</p>
+                        </div>
+                    </div>
+                    
+                    <script>
+                        // Add error handling for image loading
+                        document.getElementById('main-image').onerror = function() {{
+                            this.style.display = 'none';
+                            const container = document.querySelector('.image-container');
+                            container.innerHTML += '<p style="color: red; margin-top: 20px;">Failed to load image. The file may be corrupted or in an unsupported format.</p>';
+                        }};
+                    </script>
+                </body>
+                </html>
+                """
+                
+                self.wfile.write(html.encode())
+                return
+            
+            # Original markdown editor code continues here...
             # Create a simple editor with split view
             with open(self.server.markdown_file, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -580,6 +669,70 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
                 self.send_response(500)
                 self.end_headers()
                 self.wfile.write(f"Error: {str(e)}".encode())
+        elif self.path == '/direct-image':
+            # Handle direct image serving for image-only preview
+            try:
+                if hasattr(self.server, 'is_image_file') and self.server.is_image_file:
+                    image_path = self.server.markdown_file
+                    
+                    # Determine content type based on extension
+                    file_ext = os.path.splitext(image_path)[1].lower()
+                    content_type_map = {
+                        '.png': 'image/png',
+                        '.jpg': 'image/jpeg',
+                        '.jpeg': 'image/jpeg',
+                        '.gif': 'image/gif',
+                        '.svg': 'image/svg+xml',
+                        '.webp': 'image/webp'
+                    }
+                    content_type = content_type_map.get(file_ext, 'image/png')
+                    
+                    # Check if file exists and is valid
+                    if os.path.exists(image_path) and os.path.isfile(image_path):
+                        file_size = os.path.getsize(image_path)
+                        
+                        # Basic validation - check if file is too small (likely corrupted)
+                        if file_size < 100:  # Very small files are likely corrupted
+                            self.send_response(500)
+                            self.send_header('Content-type', 'text/plain')
+                            self.end_headers()
+                            self.wfile.write(f"Error: Image file appears to be corrupted (size: {file_size} bytes)".encode())
+                            return
+                        
+                        # Send the image with proper headers
+                        self.send_response(200)
+                        self.send_header('Content-type', content_type)
+                        self.send_header('Content-length', str(file_size))
+                        self.send_header('Cache-Control', 'no-cache')  # Ensure fresh load
+                        self.end_headers()
+                        
+                        # Read and send the image in chunks to handle large files
+                        try:
+                            with open(image_path, 'rb') as f:
+                                chunk_size = 8192
+                                while True:
+                                    chunk = f.read(chunk_size)
+                                    if not chunk:
+                                        break
+                                    self.wfile.write(chunk)
+                        except IOError as io_error:
+                            logger.error(f"Error reading image file {image_path}: {io_error}")
+                    else:
+                        self.send_response(404)
+                        self.send_header('Content-type', 'text/plain')
+                        self.end_headers()
+                        self.wfile.write(f"Error: Image file not found: {image_path}".encode())
+                else:
+                    self.send_response(400)
+                    self.send_header('Content-type', 'text/plain')
+                    self.end_headers()
+                    self.wfile.write("Error: Direct image access not available for this preview type".encode())
+            except Exception as e:
+                logger.error(f"Error serving direct image: {e}")
+                self.send_response(500)
+                self.send_header('Content-type', 'text/plain')
+                self.end_headers()
+                self.wfile.write(f"Error serving image: {str(e)}".encode())
         else:
             # Path not found
             self.send_response(404)
@@ -633,10 +786,10 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
 
 def start_live_preview(file_path: str, port: int = 8000) -> Dict[str, Any]:
     """
-    Start a live preview server for a Markdown document.
+    Start a live preview server for a Markdown document or image file.
     
     Args:
-        file_path: Path to the Markdown file or filename in workspace
+        file_path: Path to the Markdown file, image file, or filename in workspace
         port: Server port
         
     Returns:
@@ -679,10 +832,18 @@ def start_live_preview(file_path: str, port: int = 8000) -> Dict[str, Any]:
         abs_path = os.path.abspath(resolved_file_path)
         logger.info(f"[start_live_preview] Starting preview for: {abs_path}")
         
+        # Check if the file is an image - if so, use image-only preview
+        file_ext = os.path.splitext(abs_path)[1].lower()
+        is_image = file_ext in ['.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp']
+        
+        if is_image:
+            logger.info(f"[start_live_preview] Detected image file, using image-only preview: {abs_path}")
+        
         # Create a custom HTTP server with file path
         class LivePreviewServer(HTTPServer):
-            def __init__(self, server_address, RequestHandlerClass, markdown_file):
+            def __init__(self, server_address, RequestHandlerClass, markdown_file, is_image_file=False):
                 self.markdown_file = markdown_file
+                self.is_image_file = is_image_file
                 super().__init__(server_address, RequestHandlerClass)
         
         # Try to find an available port
@@ -695,7 +856,7 @@ def start_live_preview(file_path: str, port: int = 8000) -> Dict[str, Any]:
             try:
                 # Bind to all interfaces (0.0.0.0) to allow external connections
                 # This is needed for Docker container access
-                server = LivePreviewServer(('0.0.0.0', try_port), LivePreviewHandler, abs_path)
+                server = LivePreviewServer(('0.0.0.0', try_port), LivePreviewHandler, abs_path, is_image)
                 actual_port = try_port
                 break
             except OSError:
