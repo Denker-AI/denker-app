@@ -159,7 +159,8 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
         sx: {
           borderRadius: isMobile ? 0 : 2,
           maxHeight: '90vh',
-          background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+          backgroundColor: theme.palette.background.paper,
+          color: theme.palette.text.primary,
         }
       }}
     >
@@ -168,7 +169,7 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
         justifyContent: 'space-between', 
         alignItems: 'center',
         pb: 1,
-        background: 'transparent'
+        backgroundColor: 'transparent'
       }}>
         <Box display="flex" alignItems="center" gap={2}>
           <Avatar sx={{ bgcolor: theme.palette.primary.main, width: 40, height: 40 }}>
@@ -198,13 +199,12 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
                   <StepContent>
                     <Paper
                       elevation={3}
-                      sx={{
-                        p: 3,
-                        mt: 2,
-                        background: 'rgba(255, 255, 255, 0.9)',
-                        backdropFilter: 'blur(10px)',
-                        border: '1px solid rgba(255, 255, 255, 0.2)',
-                      }}
+                                             sx={{
+                         p: 3,
+                         mt: 2,
+                         backgroundColor: theme.palette.background.default,
+                         border: `1px solid ${theme.palette.divider}`,
+                       }}
                     >
                       <Fade in={activeStep === index} timeout={500}>
                         <Box textAlign="center">
@@ -218,18 +218,18 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
                             {step.description}
                           </Typography>
                           {step.highlight && (
-                            <Typography 
-                              variant="body2" 
-                              sx={{ 
-                                fontWeight: 'bold',
-                                color: theme.palette.primary.main,
-                                backgroundColor: 'rgba(25, 118, 210, 0.1)',
-                                padding: '4px 8px',
-                                borderRadius: 1,
-                                display: 'inline-block',
-                                mb: 2
-                              }}
-                            >
+                                                         <Typography 
+                               variant="body2" 
+                               sx={{ 
+                                 fontWeight: 'bold',
+                                 color: theme.palette.primary.main,
+                                 backgroundColor: theme.palette.primary.main + '20', // 20% opacity
+                                 padding: '4px 8px',
+                                 borderRadius: 1,
+                                 display: 'inline-block',
+                                 mb: 2
+                               }}
+                             >
                               💡 Look for: {step.highlight}
                             </Typography>
                           )}
@@ -247,18 +247,17 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
           <Slide direction="up" in={true} timeout={500}>
             <Paper
               elevation={6}
-              sx={{
-                p: 4,
-                textAlign: 'center',
-                background: 'rgba(255, 255, 255, 0.95)',
-                backdropFilter: 'blur(20px)',
-                border: '1px solid rgba(255, 255, 255, 0.3)',
-                borderRadius: 3,
-                minHeight: 250,
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center'
-              }}
+                             sx={{
+                 p: 4,
+                 textAlign: 'center',
+                 backgroundColor: theme.palette.background.default,
+                 border: `1px solid ${theme.palette.divider}`,
+                 borderRadius: 3,
+                 minHeight: 250,
+                 display: 'flex',
+                 flexDirection: 'column',
+                 justifyContent: 'center'
+               }}
             >
               <Fade in={true} timeout={800}>
                 <Box>
@@ -273,18 +272,18 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
                   </Typography>
                   {currentStep.highlight && (
                     <Box sx={{ mb: 3 }}>
-                      <Typography 
-                        variant="body1" 
-                        sx={{ 
-                          fontWeight: 'bold',
-                          color: theme.palette.primary.main,
-                          backgroundColor: 'rgba(25, 118, 210, 0.1)',
-                          padding: '8px 16px',
-                          borderRadius: 2,
-                          display: 'inline-block',
-                          fontSize: '1rem'
-                        }}
-                      >
+                                             <Typography 
+                         variant="body1" 
+                         sx={{ 
+                           fontWeight: 'bold',
+                           color: theme.palette.primary.main,
+                           backgroundColor: theme.palette.primary.main + '20', // 20% opacity
+                           padding: '8px 16px',
+                           borderRadius: 2,
+                           display: 'inline-block',
+                           fontSize: '1rem'
+                         }}
+                       >
                         💡 Look for: {currentStep.highlight}
                       </Typography>
                     </Box>
@@ -296,7 +295,7 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
         )}
       </DialogContent>
 
-      <DialogActions sx={{ p: 3, background: 'transparent', justifyContent: 'space-between' }}>
+      <DialogActions sx={{ p: 3, backgroundColor: 'transparent', justifyContent: 'space-between' }}>
         <Button 
           onClick={handleSkipAll} 
           color="inherit"
