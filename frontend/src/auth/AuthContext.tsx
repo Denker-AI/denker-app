@@ -1,5 +1,5 @@
 import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { CircularProgress } from '@mui/material';
 import { api } from '../services/api';
 import { LoadingScreen } from '../components/Common';
@@ -43,8 +43,11 @@ interface AuthProviderProps {
 
 // Create the provider component
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const location = useLocation();
+  const isSubWindow = location.pathname === '/subwindow';
+  
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
-  const [isLoading, setIsLoading] = useState<boolean>(true); // Start loading until initial check is done
+  const [isLoading, setIsLoading] = useState<boolean>(!isSubWindow); // Skip loading for subwindow
   const [error, setError] = useState<string | null>(null);
   const [user, setUser] = useState<UserInfo | null>(null); // Add user state
   const [backendReady, setBackendReady] = useState<boolean>(false); // Add backend readiness state
@@ -284,6 +287,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // --- Effect for Initial Auth Check & IPC Listeners ---
   useEffect(() => {
+    // Skip all authentication logic for subwindow
+    if (isSubWindow) {
+      console.log('[AuthContext] Subwindow detected, skipping authentication flow');
+      setIsAuthenticated(true); // Mark as authenticated for subwindow
+      setIsLoading(false);
+      return;
+    }
+    
     let isMounted = true;
     let authCheckCompleted = false;
     console.log('[AuthContext] Running initial effect setup...');
@@ -493,7 +504,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       backendCleanups?.cleanupBackendFailed?.();
       backendCleanups?.cleanupBackendStopped?.();
     };
-  }, []); // Empty dependency array - run once on mount
+  }, [isSubWindow]); // Include isSubWindow dependency
 
   // Add automatic timeout to prevent infinite loading - moved to top level to follow Rules of Hooks
   useEffect(() => {
@@ -544,8 +555,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     hideOnboarding,
   };
 
-  // Show enhanced loading screen during initial startup
-  if (isLoading) {
+  // Show enhanced loading screen during initial startup (but not for subwindow)
+  if (isLoading && !isSubWindow) {
     let loadingMessage = "Welcome to Denker!";
     let showDetailedSteps = true;
     let loadingDuration = 10000; // Reduced to 10 seconds for better UX with unstable networks
