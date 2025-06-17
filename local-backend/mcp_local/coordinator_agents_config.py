@@ -28,8 +28,29 @@ from .coordinator_memory import CoordinatorMemory
 from mcp_agent.workflows.orchestrator.orchestrator import Orchestrator
 from mcp_agent.workflows.orchestrator.orchestrator_models import Plan
 
+# NOTE: FixedAnthropicAugmentedLLM will be passed as parameter to avoid circular import
+
 class StrictOrchestrator(Orchestrator):
     """Custom orchestrator that patches the planning prompt to prevent premature plan completion."""
+    
+    def __init__(self, *args, fixed_llm_class=None, **kwargs):
+        # Initialize the parent orchestrator
+        super().__init__(*args, **kwargs)
+        
+        # Replace the planner with our fixed version if provided
+        if fixed_llm_class and hasattr(self, 'planner') and self.planner:
+            # Get the current planner's configuration
+            current_config = {
+                'agent': getattr(self.planner, 'agent', None),
+                'server_names': getattr(self.planner, 'server_names', None),
+                'instruction': getattr(self.planner, 'instruction', None),
+                'name': getattr(self.planner, 'name', None),
+                'default_request_params': getattr(self.planner, 'default_request_params', None),
+                'context': getattr(self.planner, 'context', None),
+            }
+            # Create new fixed planner with same config
+            self.planner = fixed_llm_class(**{k: v for k, v in current_config.items() if v is not None})
+            logger.info("StrictOrchestrator: Replaced planner with FixedAnthropicAugmentedLLM")
     
     async def _get_full_plan(
         self,
@@ -125,7 +146,6 @@ No extra text. Do not wrap in ```json code fences."""
         )
 
         return plan
-# --- END ADDED ---
 
 # --- ADDED: Agent-specific wrapper for shared cache LLM ---
 class AgentSpecificWrapper:
@@ -651,18 +671,31 @@ class AgentConfiguration:
 
                 **EMOJI GUIDELINES:** 🔍 Use relevant emojis to make your research findings more readable and organized. Examples: 🔍 for search results, 📊 for data, 💡 for insights, 📚 for sources, ⚠️ for limitations, etc.
 
+                **CRITICAL FILE-FIRST RESEARCH PRIORITY:**
+                📁 **WHEN FILES ARE ATTACHED - USE QDRANT ONLY, NO WEB SEARCH**
+                • If the user has attached files to their message, prioritize searching these files using Qdrant
+                • Do NOT use web search when files are attached - focus on user's provided materials
+                • Only search within the attached documents and related content in Qdrant
+                • The user has provided specific files because they want answers from THOSE files, not general web information
+                • If information is not found in attached files, clearly state this limitation rather than searching the web
+
                 **STRICT SCOPE - Research ONLY:**
-                • **Web Research:** Search and fetch online information with citations
-                • **Local Research:** Find information in user files using Qdrant and filesystem
+                • **Web Research:** Search and fetch online information with citations (ONLY when NO files attached)
+                  - **SUMMARIZE web search results**: Don't copy entire articles - extract key points, data, and quotes
+                  - Provide concise summaries of lengthy web content with proper citations
+                • **Local Research:** Find information in user files using Qdrant and filesystem (PRIORITY when files attached)
                 • **Information Extraction:** Extract relevant facts, data, and quotes
                 • **Citation Provision:** Provide proper source citations for all findings
 
                 **What You DO:**
                 ✅ Search for information on requested topics
                 ✅ Extract relevant facts, data, quotes, and insights  
+                ✅ **SUMMARIZE lengthy web search results** - extract key points instead of copying entire articles
                 ✅ Provide proper citations: `[1](url)` or `[1](filepath:/path/to/file)`
                 ✅ Note information gaps or limitations
                 ✅ Present findings as raw research data
+                ✅ **PRIORITIZE Qdrant searches when files are attached**
+                ✅ **AVOID web search when user has provided specific files**
 
                 **What You DO NOT Do:**
                 ❌ Write articles, reports, or documents
@@ -670,6 +703,7 @@ class AgentConfiguration:
                 ❌ Format research into polished presentations
                 ❌ Make recommendations or conclusions
                 ❌ Use markdown-editor or filesystem for content creation
+                ❌ **Web search when files are attached (use Qdrant instead)**
 
                 **Simple Research Output Format:**
                 Present your findings as bullet-pointed research data with citations:
@@ -693,23 +727,23 @@ class AgentConfiguration:
 
                 **CRITICAL SECURITY MODEL - WORKSPACE-FIRST APPROACH:**
                 🔒 **ALL WORK HAPPENS IN WORKSPACE FIRST** 🔒
-                • You can ONLY create/edit files in workspace: `/workspace/filename.md`
+                • You can ONLY create/edit files in workspace: `/tmp/dnker_workspace/default/filename.md`
                 • NEVER attempt to write directly to user folders (security violation)
                 • Use simple filenames in workspace: `report.md`, `analysis.md`
                 • Final conversion happens directly to user's desired location
 
                 **MANDATORY WORKFLOW - ALWAYS FOLLOW THIS SEQUENCE:**
-                1. **Create content in workspace**: Use markdown-editor to create content in workspace (e.g., `/workspace/report.md`)
+                1. **Create content in workspace**: Use markdown-editor to create content in workspace (e.g., report.md)
                 2. **ALWAYS show live preview FIRST**: Use `markdown-editor.live_preview` to display the content to user
                 3. **Convert directly to user location**: Use `markdown-editor.convert_from_md` with destination path to convert directly to user's preferred format and location
                 4. **ALWAYS provide ABSOLUTE PATH**: Always provide the complete absolute path of the final file
 
                 **WORKFLOW EXAMPLE:**
                 User: "Write a report.docx and save to Downloads"
-                1. You: Create `/workspace/report.md` using markdown-editor
-                2. You: Work on content in `/workspace/report.md`
-                3. You: **MANDATORY** - Use `markdown-editor.live_preview` to show results to user
-                4. You: Convert directly: `markdown-editor.convert_from_md(source="/workspace/report.md", output_format="docx", destination="/Users/username/Downloads/report.docx")`
+                1. Create in the workspace: report.md` using markdown-editor
+                2. Work on content in workspace/report.md`
+                3. **MANDATORY** - Use `markdown-editor.live_preview` to show results to user
+                4. Convert directly: `markdown-editor.convert_from_md(source="/tmp/denker_workspace/default/report.md", output_format="docx", destination="/Users/username/Downloads/report.docx")`
                 5. You: **ALWAYS provide ABSOLUTE PATH**: "Final file saved to: `/Users/username/Downloads/report.docx`"
 
                 **STRICT SCOPE - Writing ONLY:**
@@ -747,14 +781,7 @@ class AgentConfiguration:
                 **MANDATORY Final Steps - NEVER SKIP:**
                 1. **ALWAYS use `markdown-editor.live_preview`** to show your written content to the user
                 2. **Then use `markdown-editor.convert_from_md`** with destination path to convert directly to user's preferred format and location
-                3. **ALWAYS provide the complete absolute path** of the final file (e.g., `/Users/username/Downloads/report.docx`)
-
-                **IMPORTANT - File Operations:**
-                • ALL editing happens in workspace first: `/workspace/filename.md`
-                • Final conversion goes directly to user location: `convert_from_md(destination="/Users/username/Downloads/file.docx")`
-                • NEVER use `filesystem.move_file` or `filesystem.write_file` with binary content
-                • This preserves file integrity and maintains security boundaries
-                • **ALWAYS provide absolute paths in your final response**""",
+                3. **ALWAYS provide the complete absolute path** of the final file (e.g., `/Users/username/Downloads/report.docx`)""",
                 "server_names": ["filesystem", "markdown-editor"],
                 "model": "claude-3-7-sonnet-20250219"
             },
@@ -772,7 +799,8 @@ class AgentConfiguration:
                 • Final conversion happens directly to user's desired location
 
                 **MANDATORY WORKFLOW - ALWAYS FOLLOW THIS SEQUENCE:**
-                1. **Copy to workspace**: If editing external file, copy to workspace first using filesystem
+                1. **Check first if there is markdown file with the same name to edit in workspace
+                2. **Copy to workspace**: If editing external file, copy to workspace first using filesystem
                 2. **Convert to markdown**: Use markdown-editor to convert to `.md` format for editing
                 3. **Edit content**: Make professional improvements to the content
                 4. **ALWAYS show live preview FIRST**: Use `markdown-editor.live_preview` to display edited content to user
@@ -781,11 +809,11 @@ class AgentConfiguration:
 
                 **WORKFLOW EXAMPLE:**
                 User: "Edit my report.docx from Desktop and save to Downloads"
-                1. You: Copy `Desktop/report.docx` → `/workspace/report.docx` using filesystem
-                2. You: Convert to `/workspace/report.md` using markdown-editor
-                3. You: Edit content in `/workspace/report.md`
+                1. You: Copy `Desktop/report.docx` → `/tmp/denker_workspace/default/report.docx` using filesystem
+                2. You: Convert to `/tmp/denker_workspace/default/report.md` using markdown-editor
+                3. You: Edit content in `/tmp/denker_workspace/default/report.md`
                 4. You: **MANDATORY** - Use `markdown-editor.live_preview` to show edited results to user
-                5. You: Convert directly: `markdown-editor.convert_from_md(source="/workspace/report.md", output_format="docx", destination="/Users/username/Downloads/report.docx")`
+                5. You: Convert directly: `markdown-editor.convert_from_md(source="/tmp/denker_workspace/default/report.md", output_format="docx", destination="/Users/username/Downloads/report.docx")`
                 6. You: **ALWAYS provide ABSOLUTE PATH**: "Edited file saved to: `/Users/username/Downloads/report.docx`"
 
                 **STRICT SCOPE - Professional Editing ONLY:**
@@ -826,15 +854,7 @@ class AgentConfiguration:
                 **MANDATORY Final Steps - NEVER SKIP:**
                 1. **ALWAYS use `markdown-editor.live_preview`** to show edited content, highlighting key improvements made
                 2. **Then use `markdown-editor.convert_from_md`** with destination path to convert directly to user's preferred format and location
-                3. **ALWAYS provide the complete absolute path** of the final file (e.g., `/Users/username/Downloads/edited_report.docx`)
-
-                **IMPORTANT - File Operations:**
-                • ALL editing happens in workspace first: `/workspace/filename.md`
-                • Final conversion goes directly to user location: `convert_from_md(destination="/Users/username/Downloads/file.docx")`
-                • NEVER use `filesystem.move_file` or `filesystem.write_file` with binary content
-                • For copying source files: `filesystem.copy_file(source="/path/to/source.docx", destination="/workspace/source.docx")`
-                • This preserves file integrity and maintains security boundaries
-                • **ALWAYS provide absolute paths in your final response**""",
+                3. **ALWAYS provide the complete absolute path** of the final file (e.g., `/Users/username/Downloads/edited_report.docx`)""",
                 "server_names": ["filesystem", "markdown-editor", "fetch", "websearch", "qdrant"],
                 "model": "claude-3-7-sonnet-20250219"
             }
@@ -1061,7 +1081,13 @@ class AgentConfiguration:
             context=context,
             server_names=[]  # Planner doesn't need external servers
         )
-        custom_planner_llm = create_anthropic_llm_fn(agent=planner_agent)
+        # Use the fixed Anthropic LLM for the planner to prevent completion parsing bugs
+        # Import here to avoid circular import
+        from .coordinator_agent import FixedAnthropicAugmentedLLM
+        custom_planner_llm = FixedAnthropicAugmentedLLM(
+            agent=planner_agent,
+            context=context
+        )
 
         # FIXED: Create a shared base LLM with agent-specific wrappers and proper agent assignment
         shared_base_llm = None
@@ -1200,12 +1226,16 @@ class AgentConfiguration:
 
         # Create the orchestrator
         try:
+            # Import here to avoid circular import
+            from .coordinator_agent import FixedAnthropicAugmentedLLM
+            
             orchestrator = StrictOrchestrator(  # Use our custom orchestrator with strict planning rules
                 llm_factory=shared_llm_factory,  # Use shared factory for any additional LLM creation
                 available_agents=task_agents_with_llms,  # Use agents with pre-assigned LLMs
                 plan_type=plan_type,
                 context=context,
-                planner=custom_planner_llm  # None - use default planner with our strict prompt override
+                planner=custom_planner_llm,  # Use custom planner with optimized decision making
+                fixed_llm_class=FixedAnthropicAugmentedLLM  # Pass the class to avoid circular import
             )
             
             # Configure the orchestrator's own default request parameters (e.g., for synthesis)

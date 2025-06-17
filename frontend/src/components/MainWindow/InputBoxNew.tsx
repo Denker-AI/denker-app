@@ -147,9 +147,24 @@ const InputBoxNew: React.FC<InputBoxProps> = ({
         setFiles([]);
         
         // Process the message asynchronously with mode information
-        onSendMessage(messageToSend, filesToSend, mode, mode === 'single' ? singleAgentType : undefined).catch(error => {
-          console.error('[InputBoxNew] Error sending message:', error);
-        });
+        try {
+          await onSendMessage(messageToSend, filesToSend, mode, mode === 'single' ? singleAgentType : undefined);
+        } catch (sendError) {
+          console.error('[InputBoxNew] Error sending message:', sendError);
+          
+          // If sending failed, restore the message and files for retry
+          if (typeof sendError === 'object' && sendError !== null && 'message' in sendError) {
+            const errorMessage = (sendError as Error).message;
+            if (errorMessage.includes('network') || errorMessage.includes('connection') || errorMessage.includes('timeout')) {
+              console.log('[InputBoxNew] Network error detected, restoring input for retry');
+              setMessage(messageToSend);
+              if (filesToSend) {
+                setFiles(filesToSend);
+              }
+            }
+          }
+          throw sendError; // Re-throw to let parent components handle it
+        }
         
         // Re-focus the input field immediately
         if (inputRef.current) {
@@ -312,11 +327,17 @@ const InputBoxNew: React.FC<InputBoxProps> = ({
       
       {/* Input area - Unified design like Cursor */}
       <Box sx={{ 
-        border: 'none',
+        border: `0.25px solid ${theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(0, 0, 0, 0.12)'}`,
         borderRadius: 2,
         p: 1,
         backgroundColor: 'transparent',
-        position: 'relative'
+        position: 'relative',
+        '&:focus-within': {
+          borderColor: theme.palette.primary.main,
+        },
+        '&:hover': {
+          borderColor: theme.palette.mode === 'dark' ? 'rgba(255, 255, 255, 0.25)' : 'rgba(0, 0, 0, 0.2)',
+        }
       }}>
         {/* Main text input area - multiline with auto-grow */}
         <TextField

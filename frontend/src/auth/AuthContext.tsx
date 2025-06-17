@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback } from 'react';
+import React, { createContext, useState, useEffect, useContext, ReactNode, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CircularProgress } from '@mui/material';
 import { api } from '../services/api';
@@ -22,6 +22,7 @@ interface AuthContextType {
   isLoading: boolean;
   error: string | null;
   user: UserInfo | null; // Add user state
+  isFromLogout: boolean; // Add logout tracking
   login: () => void;
   logout: () => void;
   getAccessToken: () => Promise<string | null>;
@@ -31,7 +32,7 @@ interface AuthContextType {
 }
 
 // Create the context with a default undefined value to ensure it's used within a provider
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
+export const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Define the props for the provider component
 interface AuthProviderProps {
@@ -46,6 +47,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<UserInfo | null>(null); // Add user state
   const [backendReady, setBackendReady] = useState<boolean>(false); // Add backend readiness state
   const [backendError, setBackendError] = useState<string | null>(null); // Add backend error state
+  const [isFromLogout, setIsFromLogout] = useState<boolean>(false); // Add logout tracking
+  const authSuccessHandledRef = useRef<boolean>(false); // Track auth success handling
 
   // Function to fetch user info via IPC (now uses cached version to prevent Auth0 rate limits)
   const fetchUserInfo = useCallback(async () => {
@@ -132,19 +135,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
     
     setError(null);
-    setIsAuthenticated(true);
+    setIsFromLogout(false); // Reset logout flag on successful login
     
-    // Fetch user info and immediately post to local backend
+    // Fetch user info and validate user exists
     const userInfo = await fetchUserInfo();
-    if (userInfo) {
-      try {
-        await postLocalLogin(userInfo);
-      } catch (err) {
-        // Don't fail the auth process if postLocalLogin fails
-        // Just log it and continue - user can manually restart if needed
-        console.error('[AuthContext] postLocalLogin failed during auth success, continuing anyway:', err);
-        setError('Coordinator initialization may have failed. You may need to restart manually.');
-      }
+    if (!userInfo) {
+      console.error('[AuthContext] User info could not be fetched - user may not exist or token may be invalid');
+      // Clear caches since the user doesn't exist
+      clearTokenCache();
+      clearUserInfoCache();
+      setError('User account not found. Please log in again.');
+      setIsAuthenticated(false);
+      setUser(null);
+      return;
+    }
+    
+    // Check if email verification is required
+    if (userInfo.email_verified === false) {
+      console.log('[AuthContext] Email not verified, redirecting to verification page');
+      clearTokenCache();
+      clearUserInfoCache();
+      setError('Please verify your email address to continue.');
+      setIsAuthenticated(false);
+      setUser(null);
+      // Redirect to email verification page
+      window.location.href = '/email-verification';
+      return;
+    }
+    
+    // Only set authenticated if we successfully got user info and email is verified
+    setIsAuthenticated(true);
+    setIsFromLogout(false); // Clear logout flag on successful login
+    
+    // Post to local backend
+    try {
+      await postLocalLogin(userInfo);
+    } catch (err) {
+      // Don't fail the auth process if postLocalLogin fails
+      // Just log it and continue - user can manually restart if needed
+      console.error('[AuthContext] postLocalLogin failed during auth success, continuing anyway:', err);
+      setError('Coordinator initialization may have failed. You may need to restart manually.');
     }
   }, [isAuthenticated, fetchUserInfo, postLocalLogin]);
 
@@ -174,6 +204,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = useCallback(async () => {
     console.log('[AuthContext] Initiating login via window.electron.login');
     setError(null); // Clear previous errors
+    setIsFromLogout(false); // Reset logout flag when starting new login
+    authSuccessHandledRef.current = false; // Reset auth success flag for new login attempt
     setIsLoading(true); // Show loading indicator while external browser is open
     try {
       // Use the renamed 'login' function exposed by preload
@@ -195,6 +227,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = useCallback(async () => {
     console.log('[AuthContext] Logout requested');
+    setIsLoading(true); // Show loading during logout
+    setIsFromLogout(true); // Set this early to show proper message
+    
     try {
       // Clear both token and user info caches
       clearTokenCache();
@@ -209,10 +244,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUser(null);
       setError(null);
       setBackendReady(false);
+      
+      // Add a small delay to show the logout message
+      setTimeout(() => {
+        setIsLoading(false);
+      }, 800);
+      
       console.log('[AuthContext] Logout completed');
     } catch (error) {
       console.error('[AuthContext] Error during logout:', error);
       setError('Logout failed');
+      setIsLoading(false);
     }
   }, []);
 
@@ -220,7 +262,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     let isMounted = true;
     let authCheckCompleted = false;
-    let authSuccessHandled = false; // Track if we've already handled auth success
     console.log('[AuthContext] Running initial effect setup...');
 
     // 1. Backend Readiness Check First
@@ -300,12 +341,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         if (token) {
           console.log('[AuthContext] Auth check: Token found, initiating auth success flow...');
           try {
-            authSuccessHandled = true; // Mark as handled to prevent IPC duplicate
+            authSuccessHandledRef.current = true; // Mark as handled to prevent IPC duplicate
             await handleAuthSuccess();
             console.log('[AuthContext] Auth success flow completed successfully.');
           } catch (error) {
             console.error('[AuthContext] Error during auth success flow:', error);
+            // Clear caches on auth success failure
+            clearTokenCache();
+            clearUserInfoCache();
             setError('Authentication setup failed. Please try logging in again.');
+            setIsAuthenticated(false);
+            setUser(null);
           }
         } else {
           console.log('[AuthContext] Auth check: No token found.');
@@ -323,11 +369,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('[AuthContext] Setting up auth IPC listeners...');
     const cleanupSuccess = (window as any).electron?.onAuthSuccessful?.(async () => {
       console.log('[AuthContext] Received auth-successful IPC.');
-      if (isMounted && !authSuccessHandled && !isLoading) {
+      if (isMounted && !authSuccessHandledRef.current) {
         console.log('[AuthContext] Processing auth-successful IPC...');
-        authSuccessHandled = true;
+        authSuccessHandledRef.current = true;
         
-        // Clear any previous errors and reset loading state
+        // Clear any previous errors and ensure loading state for processing
         setError(null);
         setIsLoading(true);
         
@@ -341,32 +387,59 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setIsLoading(false);
         }
       } else {
-        console.log('[AuthContext] Skipping auth-successful IPC - already handled, loading, or component unmounted');
+        console.log('[AuthContext] Skipping auth-successful IPC - already handled or component unmounted');
       }
     });
 
     const cleanupFailed = (window as any).electron?.onAuthFailed?.((errorInfo: any) => {
       console.error('[AuthContext] Received auth-failed IPC:', errorInfo);
       if (isMounted) {
-        setError(errorInfo?.error_description || errorInfo?.error || 'Authentication failed.');
+        const errorMessage = errorInfo?.error_description || errorInfo?.error || 'Authentication failed.';
+        
+        // Check for email verification errors
+        if (errorMessage.includes('Please verify your email') || 
+            errorMessage.includes('email_not_verified') ||
+            errorMessage.includes('verify') ||
+            errorInfo?.error === 'access_denied' && errorMessage.includes('email')) {
+          console.log('[AuthContext] Email verification required, redirecting...');
+          // Redirect to email verification page
+          window.location.href = '/email-verification';
+          return;
+        }
+        
+        // Check for signup-related errors that might need verification
+        if (errorMessage.includes('signup') || 
+            errorMessage.includes('registration') ||
+            errorMessage.includes('account creation')) {
+          console.log('[AuthContext] Signup detected, might need email verification');
+          setError('Account created successfully! Please check your email for verification instructions.');
+        } else {
+          setError(errorMessage);
+        }
+        
         setIsAuthenticated(false);
         setUser(null);
         setIsLoading(false);
         // Reset auth success handled flag so next attempt can succeed
-        authSuccessHandled = false;
+        authSuccessHandledRef.current = false;
       }
     });
 
     const cleanupLogout = (window as any).electron?.onAuthLoggedOut?.(() => {
       console.log('[AuthContext] Received auth-logged-out IPC.');
       if (isMounted) {
+        // Clear both token and user info caches when logout IPC is received
+        clearTokenCache();
+        clearUserInfoCache();
+        
         setError(null); 
         setIsAuthenticated(false);
         setUser(null);
-        setIsLoading(false);
+        setIsLoading(false); // Immediately stop loading for logout
+        setIsFromLogout(true); // Mark as coming from logout
         // Reset flags to allow fresh authentication
         authCheckCompleted = false;
-        authSuccessHandled = false;
+        authSuccessHandledRef.current = false;
         console.log('[AuthContext] Auth state reset after logout.');
       }
     });
@@ -398,12 +471,47 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     };
   }, []); // Empty dependency array - run once on mount
 
+  // Add automatic timeout to prevent infinite loading - moved to top level to follow Rules of Hooks
+  useEffect(() => {
+    if (isLoading) {
+      let loadingDuration = 10000; // Default to 10 seconds
+      
+      if (backendError) {
+        loadingDuration = 0; // No timeout if backend error
+      } else if (!backendReady) {
+        loadingDuration = 15000; // Increased timeout for backend readiness
+      } else if (backendReady && !isAuthenticated) {
+        if (isFromLogout) {
+          // Much shorter timeout for logout scenarios - user just wants to log out
+          loadingDuration = 1000;
+        } else {
+          // Longer timeout when user might be signing up for the first time
+          loadingDuration = 60000; // 60 seconds for potential signup/email verification flow
+        }
+      }
+
+      if (loadingDuration > 0) {
+        const maxLoadingTimeout = setTimeout(() => {
+          console.warn('[AuthContext] Loading timeout reached, forcing completion');
+          setIsLoading(false);
+          if (!isAuthenticated && !backendError && !isFromLogout) {
+            // More helpful message for signup timeout (but not for logout)
+            setError('Authentication is taking longer than expected. If you\'re signing up, please check your email for verification and try logging in again.');
+          }
+        }, loadingDuration);
+
+        return () => clearTimeout(maxLoadingTimeout);
+      }
+    }
+  }, [isLoading, backendError, backendReady, isAuthenticated, isFromLogout]);
+
   // Provide the context value to children
   const value = {
     isAuthenticated,
     isLoading,
     error,
     user, // Provide user info
+    isFromLogout,
     login,
     logout,
     getAccessToken,
@@ -414,7 +522,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   if (isLoading) {
     let loadingMessage = "Welcome to Denker!";
     let showDetailedSteps = true;
-    let loadingDuration = 15000; // Reduced to 15 seconds to match optimized startup time
+    let loadingDuration = 10000; // Reduced to 10 seconds for better UX with unstable networks
     
     if (backendError) {
       loadingMessage = "Oops, something went wrong";
@@ -423,11 +531,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     } else if (!backendReady) {
       loadingMessage = "Setting up your AI workspace...";
       showDetailedSteps = true;
-      loadingDuration = 12000; // Reduced from 30s to 12s - backend starts much faster now
+      loadingDuration = 8000; // Reduced timeout for backend readiness
     } else if (backendReady && !isAuthenticated) {
-      loadingMessage = "Signing you in...";
-      showDetailedSteps = false;
-      loadingDuration = 3000; // Reduced from 5s to 3s - auth check is quick
+      // Consider logout context for better UX
+      if (isFromLogout) {
+        loadingMessage = "Logging out...";
+        showDetailedSteps = false;
+        loadingDuration = 1000; // Shorter logout timeout
+      } else {
+        loadingMessage = "Signing you in...";
+        showDetailedSteps = false;
+        loadingDuration = 2000; // Shorter auth timeout for unstable networks
+      }
     }
     
     return (

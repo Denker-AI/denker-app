@@ -1,53 +1,55 @@
-import React, { useEffect } from 'react';
+import React, { useContext, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth } from '../auth/AuthContext'; // Import the custom hook
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Typography,
-  Paper,
-  Alert,
-  AppBar,
-  Toolbar,
-  IconButton,
+import { 
+  Box, 
+  Button, 
+  Paper, 
+  Typography, 
+  Alert, 
+  AppBar, 
+  Toolbar, 
+  IconButton, 
+  useTheme 
 } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
 import CloseIcon from '@mui/icons-material/Close';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import { AuthContext } from '../auth/AuthContext';
 
-// No need to redefine the Window interface - we'll use type assertions instead
+declare global {
+  interface Window {
+    electron?: {
+      minimizeMainWindow?: () => void;
+    };
+  }
+}
 
-// Check if running in Electron
-const isElectron = window.navigator.userAgent.toLowerCase().indexOf('electron') > -1;
+const isElectron = !!(window as any).electron;
 
 const Login: React.FC = () => {
-  // Use our custom hook instead of useAuth0
-  const { login, isLoading, isAuthenticated, error } = useAuth();
-  const navigate = useNavigate();
+  const { login, isLoading, error, isFromLogout, isAuthenticated } = useContext(AuthContext);
   const theme = useTheme();
-  
-  // Track if this is initial loading vs actual login loading
-  const [initialLoad, setInitialLoad] = React.useState(true);
-  
-  // Redirect if already authenticated
-  useEffect(() => {
-    if (!isLoading && isAuthenticated) {
-      console.log('[Login Page] Already authenticated, redirecting to /');
-      navigate('/'); // Navigate to the main app route
-    }
-  }, [isLoading, isAuthenticated, navigate]);
+  const navigate = useNavigate();
+  const [initialLoad, setInitialLoad] = useState(true);
 
-  // Set initial load to false after a short delay
   useEffect(() => {
+    // After 2 seconds, mark initial load as complete
     const timer = setTimeout(() => {
       setInitialLoad(false);
-    }, 2000); // Give 2 seconds for initial auth check
-    
+    }, 2000);
+
     return () => clearTimeout(timer);
   }, []);
 
+  // Redirect to main window if user becomes authenticated
+  useEffect(() => {
+    if (isAuthenticated && !isLoading) {
+      console.log('[Login] User authenticated, redirecting to main window');
+      navigate('/', { replace: true });
+    }
+  }, [isAuthenticated, isLoading, navigate]);
+
   const handleLogin = () => {
+    console.log('Login button clicked');
     login(); // Call the login function from our context
   };
 
@@ -67,8 +69,40 @@ const Login: React.FC = () => {
     window.location.reload();
   };
 
+  // Determine appropriate messaging based on context
+  const getWelcomeMessage = () => {
+    if (isFromLogout) {
+      return 'Please Sign In';
+    }
+    return 'Welcome to Denker';
+  };
+
+  const getSubMessage = () => {
+    if (isFromLogout) {
+      return 'Sign in to continue using your AI assistant';
+    }
+    return 'Your intelligent AI assistant for maximum productivity';
+  };
+
+  const getLoadingMessage = () => {
+    if (isFromLogout) {
+      return {
+        primary: 'Signing you back in...',
+        secondary: 'Restoring your AI assistant session'
+      };
+    }
+    return {
+      primary: initialLoad ? 'Welcome to Denker!' : 'Almost there...',
+      secondary: initialLoad 
+        ? 'Setting up your AI assistant for maximum productivity' 
+        : 'Completing your secure login to get started'
+    };
+  };
+
   // Loading state with improved messaging
   if (isLoading || initialLoad) {
+    const loadingMessages = getLoadingMessage();
+    
     return (
       <Box
         sx={{
@@ -92,15 +126,11 @@ const Login: React.FC = () => {
             minWidth: 300
           }}
         >
-          <CircularProgress size={60} sx={{ mb: 3, color: theme.palette.primary.main }} />
           <Typography variant="h6" gutterBottom>
-            {initialLoad ? 'Welcome to Denker!' : 'Almost there...'}
+            {loadingMessages.primary}
           </Typography>
           <Typography variant="body2" color="text.secondary">
-            {initialLoad 
-              ? 'Setting up your AI assistant for maximum productivity' 
-              : 'Completing your secure login to get started'
-            }
+            {loadingMessages.secondary}
           </Typography>
         </Paper>
       </Box>
@@ -165,8 +195,15 @@ const Login: React.FC = () => {
           }}
         >
           <Typography variant="h5" component="h1" gutterBottom align="center">
-            Welcome to Denker
+            {getWelcomeMessage()}
           </Typography>
+          
+          {/* Show subtitle only for new users */}
+          {!isFromLogout && (
+            <Typography variant="body1" color="text.secondary" sx={{ mb: 2, textAlign: 'center' }}>
+              {getSubMessage()}
+            </Typography>
+          )}
           
           {error && (
             <Alert severity="error" sx={{ width: '100%', mb: 2 }}>
@@ -177,7 +214,6 @@ const Login: React.FC = () => {
           <Box sx={{ mt: 2, width: '100%', textAlign: 'center' }}>
             {isLoading ? (
               <>
-                <CircularProgress sx={{ mb: 1 }}/>
                 <Typography variant="body2" color="text.secondary">
                   {error ? 'Retrying...' : 'Processing Login...'} 
                 </Typography>
@@ -191,14 +227,17 @@ const Login: React.FC = () => {
                 onClick={handleLogin}
                 disabled={isLoading}
               >
-                Log In / Sign Up
+                {isFromLogout ? 'Sign In' : 'Log In / Sign Up'}
               </Button>
             )}
           </Box>
           
           {!isLoading && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 3, textAlign: 'center' }}>
-              Click the button to securely log in or sign up via your browser.
+              {isFromLogout 
+                ? 'Click to sign back in securely via your browser.'
+                : 'Click the button to securely log in or sign up via your browser. New users will need to verify their email address.'
+              }
             </Typography>
           )}
           

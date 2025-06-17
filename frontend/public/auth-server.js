@@ -82,7 +82,7 @@ function createAuthServer(options = {}) {
         urlParts
       });
       
-      // Send a success response - UPDATED STYLING, REMOVED CLOSE LOGIC
+      // Send a success response - UPDATED STYLING, REMOVED SPINNER, ADDED AUTO-CLOSE TIMEOUT
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`<!DOCTYPE html>
         <html lang="en">
@@ -90,7 +90,7 @@ function createAuthServer(options = {}) {
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Authentication Successful - Denker</title>
-          <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
           <style>
             body { 
               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -106,16 +106,37 @@ function createAuthServer(options = {}) {
             .container { max-width: 400px; padding: 30px; }
             h1 { color: #4CAF50; margin-bottom: 15px; }
             p { font-size: 16px; line-height: 1.5; }
-            .spinner { margin: 25px auto; width: 30px; height: 30px; border: 3px solid rgba(212, 212, 212, 0.3); border-top: 3px solid #4CAF50; border-radius: 50%; animation: spin 1s linear infinite; }
-            @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+            .countdown { color: #4CAF50; font-weight: bold; }
           </style>
         </head>
         <body>
           <div class="container">
-            <h1>Authentication Complete</h1>
-            <div class="spinner"></div>
-            <p>You have successfully authenticated. You may now close this window and return to the Denker application.</p>
+            <h1>Authentication Complete ✅</h1>
+            <p>You have successfully authenticated with Denker!</p>
+            <p>This window will close automatically in <span class="countdown" id="countdown">3</span> seconds.</p>
+            <p><small>You can also close this window manually if needed.</small></p>
           </div>
+          
+          <script>
+            let seconds = 3;
+            const countdownElement = document.getElementById('countdown');
+            
+            const timer = setInterval(() => {
+              seconds--;
+              if (countdownElement) {
+                countdownElement.textContent = seconds;
+              }
+              
+              if (seconds <= 0) {
+                clearInterval(timer);
+                try {
+                  window.close();
+                } catch (e) {
+                  console.log('Could not close window automatically:', e);
+                }
+              }
+            }, 1000);
+          </script>
         </body>
         </html>`);
     } else if (pathname === '/logout-success') {
@@ -127,7 +148,7 @@ function createAuthServer(options = {}) {
           <meta charset="UTF-8">
           <meta name="viewport" content="width=device-width, initial-scale=1.0">
           <title>Logout Successful - Denker</title>
-          <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'">
+          <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
           <style>
             body { 
               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
@@ -143,13 +164,37 @@ function createAuthServer(options = {}) {
             .container { max-width: 400px; padding: 30px; }
             h1 { color: #4CAF50; margin-bottom: 15px; }
             p { font-size: 16px; line-height: 1.5; }
+            .countdown { color: #4CAF50; font-weight: bold; }
           </style>
         </head>
         <body>
           <div class="container">
-            <h1>Logout Successful</h1>
-            <p>You have been logged out from Denker. You can now close this window.</p>
+            <h1>Logout Successful ✅</h1>
+            <p>You have been successfully logged out from Denker.</p>
+            <p>This window will close automatically in <span class="countdown" id="countdown">3</span> seconds.</p>
+            <p><small>You can also close this window manually if needed.</small></p>
           </div>
+          
+          <script>
+            let seconds = 3;
+            const countdownElement = document.getElementById('countdown');
+            
+            const timer = setInterval(() => {
+              seconds--;
+              if (countdownElement) {
+                countdownElement.textContent = seconds;
+              }
+              
+              if (seconds <= 0) {
+                clearInterval(timer);
+                try {
+                  window.close();
+                } catch (e) {
+                  console.log('Could not close window automatically:', e);
+                }
+              }
+            }, 1000);
+          </script>
         </body>
         </html>`);
     } else if (urlParts.pathname === '/auth-complete') {
