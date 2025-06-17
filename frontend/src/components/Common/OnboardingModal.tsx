@@ -13,37 +13,154 @@ import {
   IconButton,
   useTheme
 } from '@mui/material';
-import { Close as CloseIcon, NavigateBefore, NavigateNext } from '@mui/icons-material';
+import { 
+  Close as CloseIcon, 
+  NavigateBefore, 
+  NavigateNext,
+  Settings as SettingsIcon,
+  FolderOpen as FolderIcon,
+  QuestionMark as HelpIcon,
+  AccountCircle as ProfileIcon,
+  Screenshot as ScreenshotIcon,
+  Keyboard as KeyboardIcon
+} from '@mui/icons-material';
 
 interface OnboardingModalProps {
   open: boolean;
   onClose: () => void;
 }
 
+interface Step {
+  title: string;
+  content: string | React.ReactNode;
+}
+
 const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
   const [activeStep, setActiveStep] = useState(0);
   const theme = useTheme();
 
-  const steps = [
+  const triggerScreenshotPermission = () => {
+    // Trigger the shortcut to show permission dialog
+    if (window.electron && (window.electron as any).triggerScreenshotPermission) {
+      (window.electron as any).triggerScreenshotPermission();
+    } else {
+      // Fallback: show instruction to user
+      alert('Please press ⌘ + Shift + D to test the screenshot permission!');
+    }
+  };
+
+  const steps: Step[] = [
     {
-      title: "Welcome to Denker",
-      content: "With Denker now you have multiple agents to help research, write and edit any file in any format, and even complete complex tasks with plans automatically."
+      title: "🎉 Welcome to Denker!",
+      content: (
+        <Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Welcome to your new **AI-powered workspace**! With Denker, you now have access to multiple intelligent agents that can:
+          </Typography>
+          <Box component="ul" sx={{ pl: 2, mb: 0 }}>
+            <li><strong>Research</strong> any topic instantly</li>
+            <li><strong>Write and edit</strong> files in any format</li>
+            <li><strong>Complete complex tasks</strong> with automated plans</li>
+            <li><strong>Understand context</strong> from your screen</li>
+          </Box>
+        </Box>
+      )
     },
     {
-      title: "Enable Screenshot Context",
-      content: "To enable denker function at it best, you need to first go to settings enable denker to take a screenshot for better context understanding. Then you select any text on your screen, copy it, and press cmd + shift + d to let denker assistant on your current task."
+      title: "📸 Enable Screenshot Context",
+      content: (
+        <Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            For the **best AI assistance**, Denker needs permission to take screenshots to understand your context.
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            <strong>Try it now:</strong> Press <KeyboardIcon sx={{ fontSize: 16, mx: 0.5 }} /> 
+            <Box component="kbd" sx={{ 
+              bgcolor: 'grey.200', 
+              color: 'grey.800', 
+              px: 1, 
+              py: 0.5, 
+              borderRadius: 1,
+              fontFamily: 'monospace',
+              fontSize: '0.85em'
+            }}>
+              ⌘ + Shift + D
+            </Box> to trigger the permission dialog.
+          </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<ScreenshotIcon />}
+            onClick={triggerScreenshotPermission}
+            sx={{ mt: 1 }}
+          >
+            Test Screenshot Permission
+          </Button>
+          <Typography variant="body2" sx={{ mt: 2, fontStyle: 'italic' }}>
+            After granting permission, you can select any text on your screen, copy it, and press the shortcut to get instant AI assistance!
+          </Typography>
+        </Box>
+      )
     },
     {
-      title: "Setup File Delivery",
-      content: "Denker has create a temporary workspace to create and edit files. To enable denker deliver end files to your folder, you need to go to settings (in the side menu) to add a folder to allow denker deliver the file."
+      title: "📁 Setup File Delivery",
+      content: (
+        <Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Denker creates files in a **temporary workspace** by default. To save files directly to your preferred location:
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            1. Go to <SettingsIcon sx={{ fontSize: 16, mx: 0.5 }} /> **Settings** (in the side menu)
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            2. Add a <FolderIcon sx={{ fontSize: 16, mx: 0.5 }} /> **delivery folder**
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            <strong>Popular choices:</strong>
+          </Typography>
+          <Box component="ul" sx={{ pl: 2, mb: 0 }}>
+            <li>📥 <u>Downloads folder</u> - for easy access</li>
+            <li>🖥️ <u>Desktop</u> - for immediate visibility</li>
+            <li>📂 <u>Projects folder</u> - for organized work</li>
+          </Box>
+        </Box>
+      )
     },
     {
-      title: "We Value Your Feedback",
-      content: "Denker is still in testing phase, give feedback by clicking on the question mark in the side menu."
+      title: "💭 We Value Your Feedback",
+      content: (
+        <Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Denker is currently in **beta testing phase**. Your feedback helps us improve!
+          </Typography>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Share your thoughts by clicking the <HelpIcon sx={{ fontSize: 16, mx: 0.5 }} /> **help icon** in the side menu.
+          </Typography>
+          <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
+            Found a bug? Have a feature request? We'd love to hear from you!
+          </Typography>
+        </Box>
+      )
     },
     {
-      title: "Your Account & Support",
-      content: "Your profile is in the side menu, you now have a free account to use Denker, you can also support Denker, so that we can deliver better features faster."
+      title: "👤 Your Account & Support",
+      content: (
+        <Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            Your <ProfileIcon sx={{ fontSize: 16, mx: 0.5 }} /> **profile** is accessible from the side menu, where you can:
+          </Typography>
+          <Box component="ul" sx={{ pl: 2, mb: 2 }}>
+            <li>View your **free account** status</li>
+            <li>Track usage and features</li>
+            <li>Upgrade for additional capabilities</li>
+          </Box>
+          <Typography variant="body1" sx={{ mb: 2 }}>
+            <strong>Support Denker:</strong> Consider upgrading to help us deliver better features faster and keep improving your AI experience!
+          </Typography>
+          <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'primary.main' }}>
+            Thank you for being part of our journey! 🚀
+          </Typography>
+        </Box>
+      )
     }
   ];
 
@@ -114,16 +231,29 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
           >
             {steps[activeStep].title}
           </Typography>
-          <Typography
-            variant="body1"
+          <Box
             sx={{
               lineHeight: 1.6,
               fontSize: '1.1rem',
-              color: theme.palette.text.primary
+              color: theme.palette.text.primary,
+              '& strong': {
+                fontWeight: 600,
+                color: theme.palette.primary.main
+              },
+              '& u': {
+                textDecoration: 'underline',
+                textDecorationColor: theme.palette.primary.main
+              }
             }}
           >
-            {steps[activeStep].content}
-          </Typography>
+            {typeof steps[activeStep].content === 'string' ? (
+              <Typography variant="body1">
+                {steps[activeStep].content}
+              </Typography>
+            ) : (
+              steps[activeStep].content
+            )}
+          </Box>
         </Box>
       </DialogContent>
 
