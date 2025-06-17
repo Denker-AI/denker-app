@@ -2607,3 +2607,35 @@ async function checkBackendHealth() {
 ipcMain.handle('is-backend-ready', () => {
   return isBackendReady;
 });
+
+// IPC handler to open a specific file path in the system's default application
+ipcMain.handle('fs:openFilePath', async (event, filePath) => {
+  try {
+    console.log(`[electron.js] Opening file: ${filePath}`);
+    
+    // Check if file exists first
+    if (!fs.existsSync(filePath)) {
+      console.error(`[electron.js] File does not exist: ${filePath}`);
+      throw new Error(`File does not exist: ${filePath}`);
+    }
+    
+    // Use shell.openPath to open the file with the system's default application
+    const result = await shell.openPath(filePath);
+    
+    if (result) {
+      // If result is non-empty, it means there was an error
+      console.error(`[electron.js] Error opening file ${filePath}: ${result}`);
+      throw new Error(`Failed to open file: ${result}`);
+    }
+    
+    console.log(`[electron.js] Successfully opened file: ${filePath}`);
+    return { success: true };
+    
+  } catch (error) {
+    console.error(`[electron.js] Error opening file ${filePath}:`, error);
+    return { 
+      success: false, 
+      error: error.message || 'Failed to open file' 
+    };
+  }
+});

@@ -165,7 +165,15 @@ try {
         captureScreenshot: () => ipcRenderer.invoke('capture-screenshot'),
         
         // File system operations
-        openFile: async () => ipcRenderer.invoke('dialog:openFile'),
+        openFile: async (filePath) => {
+          if (filePath) {
+            // Open a specific file path
+            return ipcRenderer.invoke('fs:openFilePath', filePath);
+          } else {
+            // Open file dialog if no path provided
+            return ipcRenderer.invoke('dialog:openFile');
+          }
+        },
         showDenkerFolder: () => ipcRenderer.invoke('fs:showDenkerFolder'),
         downloadFile: (fileId) => ipcRenderer.invoke('fs:downloadFile', fileId),
         

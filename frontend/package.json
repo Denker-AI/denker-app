@@ -49,6 +49,7 @@
   },
   "scripts": {
     "start": "vite",
+    "dev": "vite --mode development",
     "build": "vite build",
     "build:prod": "vite build --mode production",
     "electron:dev": "concurrently -k \"npm run start\" \"npm run wait-and-launch\"",

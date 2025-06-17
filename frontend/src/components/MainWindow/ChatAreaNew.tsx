@@ -65,7 +65,7 @@ marked.setOptions({
 declare global {
   interface Window {
     electronAPI?: {
-      openFile: (filePath: string) => Promise<void>;
+      openFile: (filePath?: string) => Promise<{ success: boolean; error?: string } | void>;
     };
     openFileInSystem: (filePath: string) => Promise<void>;
     openImageInBrowser: (imagePath: string) => void;
@@ -119,8 +119,16 @@ const openFileInSystem = async (filePath: string) => {
   try {
     // Use the Electron API if available
     if (window.electronAPI?.openFile) {
-      await window.electronAPI.openFile(filePath);
+      console.log(`[FilePath] Opening file via Electron API: ${filePath}`);
+      const result = await window.electronAPI.openFile(filePath);
+      
+      if (result && !result.success) {
+        throw new Error(result.error || 'Failed to open file');
+      }
+      
+      console.log(`[FilePath] Successfully opened file: ${filePath}`);
     } else {
+      console.warn('[FilePath] Electron API not available, falling back to browser method');
       // Fallback: try to open via browser (for web version)
       // This will attempt to download/open the file
       const link = document.createElement('a');
@@ -131,7 +139,8 @@ const openFileInSystem = async (filePath: string) => {
   } catch (error) {
     console.error('Failed to open file:', error);
     // Show user-friendly error
-    alert(`Could not open file: ${filePath}`);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+    alert(`Could not open file: ${filePath}\n\nError: ${errorMessage}\n\nTip: Make sure the file exists and you have permission to access it.`);
   }
 };
 

@@ -323,7 +323,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     console.log('[AuthContext] Setting up auth IPC listeners...');
     const cleanupSuccess = (window as any).electron?.onAuthSuccessful?.(async () => {
       console.log('[AuthContext] Received auth-successful IPC.');
-      if (isMounted && !authSuccessHandled) {
+      if (isMounted && !authSuccessHandled && !isLoading) {
         console.log('[AuthContext] Processing auth-successful IPC...');
         authSuccessHandled = true;
         
@@ -341,7 +341,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           setIsLoading(false);
         }
       } else {
-        console.log('[AuthContext] Skipping auth-successful IPC - already handled or component unmounted');
+        console.log('[AuthContext] Skipping auth-successful IPC - already handled, loading, or component unmounted');
       }
     });
 

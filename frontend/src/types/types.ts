@@ -66,7 +66,7 @@ export interface ElectronAPI {
     NODE_ENV?: string;
     [key: string]: string | undefined;
   };
-  openFile: () => Promise<string>;
+  openFile: (filePath?: string) => Promise<{ success: boolean; error?: string } | string>;
   showDenkerFolder: () => Promise<void>;
   downloadFile: (fileId: string) => Promise<void>;
   writeToClipboard: (text: string) => Promise<void>;

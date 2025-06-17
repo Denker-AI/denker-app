@@ -493,7 +493,7 @@ export const useRealTimeUpdates = () => {
       }, 500);
       return () => clearTimeout(cleanupTimeout);
     }
-  }, [wsStatus, activeQueryId, cleanupQueryResources, setAgentStatus]); // Added setAgentStatus dependencies
+  }, [wsStatus, activeQueryId, cleanupQueryResources]); // Removed setAgentStatus to prevent infinite loops
 
   // --- Main useEffect watching latestStepData ---
   useEffect(() => {

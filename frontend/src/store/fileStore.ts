@@ -132,9 +132,13 @@ const useFileStore = create<FileStore>()(
         console.log('File store rehydrated from storage');
         
         // Use setTimeout to ensure state update happens after the current execution
-        setTimeout(() => {
-          useFileStore.setState({ _hasHydrated: true });
-        }, 0);
+        // but only if not already hydrated to prevent duplicate setState calls
+        const currentState = useFileStore.getState();
+        if (!currentState._hasHydrated) {
+          setTimeout(() => {
+            useFileStore.setState({ _hasHydrated: true });
+          }, 0);
+        }
       }
     }
   )

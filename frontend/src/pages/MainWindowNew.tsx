@@ -384,7 +384,7 @@ const MainWindowNew: React.FC = () => {
       setAlertSeverity('warning');
       setAlertOpen(true);
     }
-  }, [network.isOffline, alertOpen]);
+  }, [network.isOffline]); // Removed alertOpen dependency to prevent state update loops
   
   // Initialize MCP Agent client
   useEffect(() => {

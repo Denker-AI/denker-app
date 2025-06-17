@@ -30,7 +30,7 @@ interface DenkerElectronAPI {
   onDeepLink: (callback: (url: string) => void) => void; // From your previous version
   
   // File system operations
-  openFile: () => Promise<string>;
+  openFile: (filePath?: string) => Promise<{ success: boolean; error?: string } | string>;
   openDirectoryDialog: () => Promise<string | null>; // The problematic one
   showDenkerFolder: () => Promise<void>;
   downloadFile: (fileId: string) => Promise<void>;
