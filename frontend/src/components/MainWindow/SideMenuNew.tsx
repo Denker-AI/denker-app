@@ -54,12 +54,14 @@ import ArrowDownwardIcon from '@mui/icons-material/ArrowDownward';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import CloudDoneIcon from '@mui/icons-material/CloudDone';
 import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import TourIcon from '@mui/icons-material/Tour';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 
 // Hooks
 import { useMainWindowHooks } from '../../hooks';
 import { useAuth } from '../../auth/AuthContext';
+import { useOnboarding } from '../../hooks/useOnboarding';
 
 // Types
 import { Conversation } from '../../types/conversation';
@@ -79,6 +81,9 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
   const { user } = useAuth();
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  
+  // Onboarding hook
+  const { openOnboarding } = useOnboarding();
   
   // State for tabs
   const [activeTab, setActiveTab] = useState(0);
@@ -260,6 +265,12 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
   // Navigate to feedback/help page
   const handleOpenFeedbackPage = () => {
     navigate('/feedback');
+    handleCloseDrawer();
+  };
+
+  // Open onboarding guide
+  const handleOpenOnboardingGuide = () => {
+    openOnboarding();
     handleCloseDrawer();
   };
   
@@ -1351,6 +1362,18 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
                 }
               }}>
                 <SettingsIcon />
+              </IconButton>
+            </Tooltip>
+            
+            <Tooltip title="Getting Started Guide">
+              <IconButton onClick={handleOpenOnboardingGuide} sx={{
+                color: theme.palette.text.secondary,
+                '&:hover': { 
+                  color: theme.palette.primary.main,
+                  backgroundColor: theme.palette.action.hover
+                }
+              }}>
+                <TourIcon />
               </IconButton>
             </Tooltip>
             

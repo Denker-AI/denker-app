@@ -11,10 +11,12 @@ import ChatAreaNew from '../components/MainWindow/ChatAreaNew';
 import InputBoxNew from '../components/MainWindow/InputBoxNew';
 import SideMenuNew from '../components/MainWindow/SideMenuNew';
 import AgentStatusIndicator from '../components/AgentStatusIndicator';
+import { OnboardingGuide } from '../components/Common';
 
 // Hooks
 import { useMainWindowHooks } from '../hooks';
 import { useAuth } from '../auth/AuthContext';
+import { useOnboarding } from '../hooks/useOnboarding';
 import { api } from '../services/api';
 import { Message } from '../types/types';
 import useMessageDatabaseUtils from '../hooks/conversation/messageDatabaseUtils';
@@ -88,6 +90,14 @@ const MainWindowNew: React.FC = () => {
   const { conversation, file, network } = useMainWindowHooks();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { getAccessToken } = useAuth();
+  
+  // Onboarding hook
+  const { 
+    isOnboardingOpen, 
+    isFirstTimeUser, 
+    closeOnboarding, 
+    skipOnboarding 
+  } = useOnboarding();
   
   // State for UI management
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(!isMobile);
@@ -1048,6 +1058,13 @@ const MainWindowNew: React.FC = () => {
   </Snackbar>
         </Box>
       </Box>
+      
+      {/* Onboarding Guide for first-time users */}
+      <OnboardingGuide
+        open={isOnboardingOpen}
+        onClose={closeOnboarding}
+        onSkip={skipOnboarding}
+      />
     </Box>
   );
 };
