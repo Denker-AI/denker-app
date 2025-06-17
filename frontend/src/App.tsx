@@ -138,7 +138,7 @@ const App: React.FC = () => {
             
             {/* Protected routes */}
             <Route path="/" element={<ProtectedRoute><MainWindowNew /></ProtectedRoute>} />
-            <Route path="/sub-window" element={<ProtectedRoute><SubWindow /></ProtectedRoute>} />
+            <Route path="/sub-window" element={<SubWindow />} />
             <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
             <Route path="/profile" element={<ProtectedRoute><ProfilePage /></ProtectedRoute>} />
             <Route path="/feedback" element={<ProtectedRoute><FeedbackPage /></ProtectedRoute>} />
