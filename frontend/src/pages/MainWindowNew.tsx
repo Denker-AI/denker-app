@@ -96,8 +96,23 @@ const MainWindowNew: React.FC = () => {
     isOnboardingOpen, 
     isFirstTimeUser, 
     closeOnboarding, 
-    skipOnboarding 
+    skipOnboarding,
+    openOnboarding 
   } = useOnboarding();
+
+  // Listen for custom onboarding events from other components (like SideMenu)
+  useEffect(() => {
+    const handleOpenOnboardingEvent = () => {
+      console.log('[MainWindow] Received openOnboarding event');
+      openOnboarding();
+    };
+
+    window.addEventListener('openOnboarding', handleOpenOnboardingEvent);
+    
+    return () => {
+      window.removeEventListener('openOnboarding', handleOpenOnboardingEvent);
+    };
+  }, [openOnboarding]);
   
   // State for UI management
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(!isMobile);

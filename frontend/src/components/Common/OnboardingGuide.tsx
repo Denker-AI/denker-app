@@ -101,6 +101,8 @@ const OnboardingGuide: React.FC<OnboardingGuideProps> = ({ open, onClose, onSkip
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  console.log('[OnboardingGuide] Component rendered with open:', open);
+
   const handleComplete = () => {
     // Mark onboarding as completed in localStorage
     localStorage.setItem('denker_onboarding_completed', 'true');

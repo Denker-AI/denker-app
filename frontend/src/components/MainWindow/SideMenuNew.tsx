@@ -82,8 +82,7 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
   
-  // Onboarding hook
-  const { openOnboarding } = useOnboarding();
+  // We'll use the requestOnboardingReplay approach instead of direct state manipulation
   
   // State for tabs
   const [activeTab, setActiveTab] = useState(0);
@@ -270,7 +269,10 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
 
   // Open onboarding guide
   const handleOpenOnboardingGuide = () => {
-    openOnboarding();
+    console.log('[SideMenu] Opening onboarding guide');
+    // Dispatch a custom event that the MainWindow can listen to
+    const event = new CustomEvent('openOnboarding');
+    window.dispatchEvent(event);
     handleCloseDrawer();
   };
   

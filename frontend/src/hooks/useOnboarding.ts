@@ -68,6 +68,7 @@ export const useOnboarding = () => {
   }, [isAuthenticated, conversationStore.conversations.length]);
 
   const openOnboarding = () => {
+    console.log('[useOnboarding] openOnboarding called');
     setOnboardingState(prev => ({
       ...prev,
       isOnboardingOpen: true
