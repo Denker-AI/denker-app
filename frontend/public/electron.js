@@ -1816,6 +1816,15 @@ function setupAppMenu() {
       label: 'Help',
       submenu: [
         {
+          label: 'Getting Started',
+          click: () => {
+            // Send navigate event to the renderer to show onboarding
+            if (mainWindow) {
+              mainWindow.webContents.send('show-onboarding');
+            }
+          }
+        },
+        {
           label: 'Feedback',
           click: () => {
             // Send navigate event to the renderer

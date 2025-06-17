@@ -29,6 +29,7 @@ interface AuthContextType {
   getAccessToken: () => Promise<string | null>;
   restartCoordinator: () => Promise<void>; // Add restart function
   hideOnboarding: () => void; // Add function to hide onboarding
+  showOnboardingModal: () => void; // Add function to show onboarding on demand
   // Optional: Add a function to refetch user info if needed
   // refreshUserInfo: () => Promise<void>; 
 }
@@ -225,6 +226,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setShowOnboarding(false);
     // Mark onboarding as completed in localStorage
     localStorage.setItem('denker_onboarding_completed', 'true');
+  }, []);
+
+  // Function to show onboarding modal on demand
+  const showOnboardingModal = useCallback(() => {
+    console.log('[AuthContext] Showing onboarding modal on demand');
+    setShowOnboarding(true);
   }, []);
 
   // --- IPC Interaction Functions ---
@@ -553,6 +560,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     getAccessToken,
     restartCoordinator,
     hideOnboarding,
+    showOnboardingModal,
   };
 
   // Show enhanced loading screen during initial startup (but not for subwindow)

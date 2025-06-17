@@ -30,8 +30,22 @@ import EmailVerificationPage from './pages/EmailVerificationPage';
 
 // Auth guard component with coordinated initialization
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, isFromLogout, showOnboarding, hideOnboarding } = useAuth();
+  const { isAuthenticated, isFromLogout, showOnboarding, hideOnboarding, showOnboardingModal } = useAuth();
   const { isInitialized, isLoading, initializationError, loadingMessage, loadingProgress, isFirstTimeUser } = useAppInitialization();
+
+  // Listen for onboarding events from electron menu
+  useEffect(() => {
+    const handleShowOnboarding = () => {
+      console.log('[ProtectedRoute] Show onboarding event received from menu');
+      // Show the onboarding modal directly
+      showOnboardingModal();
+    };
+
+    if (window.electron?.onShowOnboarding) {
+      const cleanup = window.electron.onShowOnboarding(handleShowOnboarding);
+      return cleanup;
+    }
+  }, [showOnboardingModal]);
 
   console.log('[ProtectedRoute] Status:', { 
     isInitialized, 

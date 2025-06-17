@@ -50,6 +50,9 @@ interface DenkerElectronAPI {
   login?: () => Promise<any>;
   getAccessToken?: () => Promise<string | null>;
   logout?: () => Promise<any>;
+  
+  // Onboarding
+  onShowOnboarding?: (callback: () => void) => () => void;
   getUserInfo?: () => Promise<any>;
   onAuthSuccessful?: (callback: () => void) => (() => void) | undefined;
   onAuthFailed?: (callback: (errorInfo: any) => void) => (() => void) | undefined;

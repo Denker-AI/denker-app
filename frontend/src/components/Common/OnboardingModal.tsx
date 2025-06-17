@@ -249,7 +249,7 @@ const OnboardingModal: React.FC<OnboardingModalProps> = ({ open, onClose }) => {
           </Box>
                      <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'primary.main' }}>
              This demo showcases Denker's ability to search online, analyze data, and create reports with visualizations automatically.
-           </Typography>
+          </Typography>
         </Box>
       )
     }

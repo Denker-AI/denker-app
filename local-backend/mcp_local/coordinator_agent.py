@@ -2118,6 +2118,12 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         # --- ADDED: Missing cache control attributes ---
         self._cache_control_types = ["ephemeral", "persistent"] # Add supported cache types
         self._default_cache_control = "ephemeral"  # Set default cache control type
+        
+        # --- FIXED: Missing cache attributes that were causing AttributeError ---
+        self.cache_tools = True  # Enable tool caching by default
+        self.cache_system_prompt = True  # Enable system prompt caching by default
+        self._cache_workflow_context = False  # Disabled workflow context caching (currently bypassed in code)
+        # --- END FIXED ---
 
     def _get_context_info(self) -> tuple[Optional[str], Optional[str]]:
         """

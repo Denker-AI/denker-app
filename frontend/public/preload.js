@@ -177,6 +177,13 @@ contextBridge.exposeInMainWorld(
           ipcRenderer.on('auth-failed', handler);
           return () => ipcRenderer.removeListener('auth-failed', handler);
         },
+        
+        // Onboarding listener
+        onShowOnboarding: (callback) => {
+          const handler = () => callback();
+          ipcRenderer.on('show-onboarding', handler);
+          return () => ipcRenderer.removeListener('show-onboarding', handler);
+        },
         onAuthLoggedOut: (callback) => {
           const handler = () => callback();
           ipcRenderer.on('auth-logged-out', handler);
