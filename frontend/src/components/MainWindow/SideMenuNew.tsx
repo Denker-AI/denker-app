@@ -60,7 +60,6 @@ import { format } from 'date-fns';
 // Hooks
 import { useMainWindowHooks } from '../../hooks';
 import { useAuth } from '../../auth/AuthContext';
-import useOnboardingStore from '../../store/onboardingStore';
 
 // Types
 import { Conversation } from '../../types/conversation';
@@ -157,9 +156,6 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
   
   // Get hooks from the main window hooks
   const { conversation, file, ui } = useMainWindowHooks();
-  
-  // Get onboarding tracking functions
-  const { markSettingsVisited, markProfileViewed, markFeedbackSeen, setShouldShowOnboarding, resetOnboarding } = useOnboardingStore();
 
   // Handle tab change
   const handleTabChange = (_: React.SyntheticEvent, newValue: number) => {
@@ -251,29 +247,19 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
   
   // Navigate to profile page
   const handleOpenProfilePage = () => {
-    markProfileViewed();
     navigate('/profile');
     handleCloseDrawer();
   };
 
   // Navigate to settings page
   const handleOpenSettingsPage = () => {
-    markSettingsVisited();
     navigate('/settings');
     handleCloseDrawer();
   };
 
   // Navigate to feedback/help page
   const handleOpenFeedbackPage = () => {
-    markFeedbackSeen();
     navigate('/feedback');
-    handleCloseDrawer();
-  };
-  
-  // Debug function to trigger onboarding (development only)
-  const handleTriggerOnboarding = () => {
-    resetOnboarding();
-    setShouldShowOnboarding(true);
     handleCloseDrawer();
   };
   
@@ -1367,21 +1353,6 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
                 <SettingsIcon />
               </IconButton>
             </Tooltip>
-            
-            {/* Debug: Onboarding trigger (development only) */}
-            {process.env.NODE_ENV === 'development' && (
-              <Tooltip title="Restart Onboarding (Dev)">
-                <IconButton onClick={handleTriggerOnboarding} sx={{
-                  color: theme.palette.text.secondary,
-                  '&:hover': { 
-                    color: theme.palette.secondary.main,
-                    backgroundColor: theme.palette.action.hover
-                  }
-                }}>
-                  <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>🚀</Typography>
-                </IconButton>
-              </Tooltip>
-            )}
             
             <Tooltip title="Help & Feedback">
               <IconButton onClick={handleOpenFeedbackPage} sx={{

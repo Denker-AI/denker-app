@@ -23,10 +23,12 @@ interface AuthContextType {
   error: string | null;
   user: UserInfo | null; // Add user state
   isFromLogout: boolean; // Add logout tracking
+  showOnboarding: boolean; // Add onboarding modal state
   login: () => void;
   logout: () => void;
   getAccessToken: () => Promise<string | null>;
   restartCoordinator: () => Promise<void>; // Add restart function
+  hideOnboarding: () => void; // Add function to hide onboarding
   // Optional: Add a function to refetch user info if needed
   // refreshUserInfo: () => Promise<void>; 
 }
@@ -48,6 +50,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [backendReady, setBackendReady] = useState<boolean>(false); // Add backend readiness state
   const [backendError, setBackendError] = useState<string | null>(null); // Add backend error state
   const [isFromLogout, setIsFromLogout] = useState<boolean>(false); // Add logout tracking
+  const [showOnboarding, setShowOnboarding] = useState<boolean>(false); // Add onboarding modal state
   const authSuccessHandledRef = useRef<boolean>(false); // Track auth success handling
 
   // Function to fetch user info via IPC (now uses cached version to prevent Auth0 rate limits)
@@ -124,6 +127,17 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [getAccessToken]);
 
+  // Function to check if this is a first-time login
+  const checkFirstTimeLogin = useCallback(async (userInfo: UserInfo) => {
+    const hasCompletedOnboarding = localStorage.getItem('denker_onboarding_completed');
+    
+    // Show onboarding if user hasn't completed it before
+    if (!hasCompletedOnboarding && userInfo.sub) {
+      console.log('[AuthContext] First-time login detected, showing onboarding');
+      setShowOnboarding(true);
+    }
+  }, []);
+
   // Combined function for auth success flow
   const handleAuthSuccess = useCallback(async () => {
     console.log('[AuthContext] Handling authentication success...');
@@ -167,6 +181,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setIsAuthenticated(true);
     setIsFromLogout(false); // Clear logout flag on successful login
     
+    // Check if this is a first-time login
+    await checkFirstTimeLogin(userInfo);
+    
     // Post to local backend
     try {
       await postLocalLogin(userInfo);
@@ -176,7 +193,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('[AuthContext] postLocalLogin failed during auth success, continuing anyway:', err);
       setError('Coordinator initialization may have failed. You may need to restart manually.');
     }
-  }, [isAuthenticated, fetchUserInfo, postLocalLogin]);
+  }, [isAuthenticated, fetchUserInfo, postLocalLogin, checkFirstTimeLogin]);
 
   // Manual restart coordinator function
   const restartCoordinator = useCallback(async () => {
@@ -199,6 +216,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       throw err; // Re-throw so caller can handle
     }
   }, [fetchUserInfo, postLocalLogin]);
+
+  // Function to hide onboarding modal
+  const hideOnboarding = useCallback(() => {
+    setShowOnboarding(false);
+    // Mark onboarding as completed in localStorage
+    localStorage.setItem('denker_onboarding_completed', 'true');
+  }, []);
 
   // --- IPC Interaction Functions ---
   const login = useCallback(async () => {
@@ -512,10 +536,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     error,
     user, // Provide user info
     isFromLogout,
+    showOnboarding,
     login,
     logout,
     getAccessToken,
     restartCoordinator,
+    hideOnboarding,
   };
 
   // Show enhanced loading screen during initial startup

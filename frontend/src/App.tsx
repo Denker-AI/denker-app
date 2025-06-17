@@ -4,7 +4,7 @@ import { useAuth } from './auth/AuthContext';
 import { useAppInitialization } from './hooks/useAppInitialization';
 
 // Components
-import { LoadingScreen } from './components/Common';
+import { LoadingScreen, OnboardingModal } from './components/Common';
 import { 
   FileSystemPermissionProvider, 
   FileSystemActivityProvider 
@@ -30,7 +30,7 @@ import EmailVerificationPage from './pages/EmailVerificationPage';
 
 // Auth guard component with coordinated initialization
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
-  const { isAuthenticated, isFromLogout } = useAuth();
+  const { isAuthenticated, isFromLogout, showOnboarding, hideOnboarding } = useAuth();
   const { isInitialized, isLoading, initializationError, loadingMessage, loadingProgress, isFirstTimeUser } = useAppInitialization();
 
   console.log('[ProtectedRoute] Status:', { 
@@ -107,7 +107,15 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   }
 
   console.log('[ProtectedRoute] Fully initialized and authenticated, rendering children');
-  return <>{children}</>;
+  return (
+    <>
+      <OnboardingModal 
+        open={showOnboarding} 
+        onClose={hideOnboarding} 
+      />
+      {children}
+    </>
+  );
 };
 
 const App: React.FC = () => {
