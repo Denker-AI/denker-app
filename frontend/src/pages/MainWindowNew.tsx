@@ -11,17 +11,19 @@ import ChatAreaNew from '../components/MainWindow/ChatAreaNew';
 import InputBoxNew from '../components/MainWindow/InputBoxNew';
 import SideMenuNew from '../components/MainWindow/SideMenuNew';
 import AgentStatusIndicator from '../components/AgentStatusIndicator';
-import { OnboardingGuide } from '../components/Common';
+import { OnboardingGuide } from '../components/Onboarding';
 
 // Hooks
 import { useMainWindowHooks } from '../hooks';
 import { useAuth } from '../auth/AuthContext';
-import { useOnboarding } from '../hooks/useOnboarding';
 import { api } from '../services/api';
 import { Message } from '../types/types';
 import useMessageDatabaseUtils from '../hooks/conversation/messageDatabaseUtils';
 import { FileAttachment } from '../hooks/conversation/types';
 import useRealTimeUpdates from '../hooks/conversation/useRealTimeUpdates';
+import useOnboardingStore from '../store/onboardingStore';
+import { useAppInitialization } from '../hooks/useAppInitialization';
+import { useShortcutMonitor } from '../hooks/useShortcutMonitor';
 
 // Import MCPAgentClient with TypeScript support now available
 import MCPAgentClient from '../utils/mcp-agent-client'; // Use import for ES modules
@@ -90,29 +92,22 @@ const MainWindowNew: React.FC = () => {
   const { conversation, file, network } = useMainWindowHooks();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const { getAccessToken } = useAuth();
+  const { isFirstTimeUser } = useAppInitialization();
   
-  // Onboarding hook
-  const { 
-    isOnboardingOpen, 
-    isFirstTimeUser, 
-    closeOnboarding, 
-    skipOnboarding,
-    openOnboarding 
-  } = useOnboarding();
-
-  // Listen for custom onboarding events from other components (like SideMenu)
-  useEffect(() => {
-    const handleOpenOnboardingEvent = () => {
-      console.log('[MainWindow] Received openOnboarding event');
-      openOnboarding();
-    };
-
-    window.addEventListener('openOnboarding', handleOpenOnboardingEvent);
-    
-    return () => {
-      window.removeEventListener('openOnboarding', handleOpenOnboardingEvent);
-    };
-  }, [openOnboarding]);
+  // Onboarding state
+  const {
+    hasCompletedOnboarding,
+    shouldShowOnboarding,
+    setShouldShowOnboarding,
+    completeOnboarding,
+    markMenuOpened,
+    markSettingsVisited,
+    markProfileViewed,
+    markFeedbackSeen,
+  } = useOnboardingStore();
+  
+  // Monitor shortcuts for onboarding
+  useShortcutMonitor();
   
   // State for UI management
   const [isSideMenuOpen, setIsSideMenuOpen] = useState(!isMobile);
@@ -215,8 +210,14 @@ const MainWindowNew: React.FC = () => {
 
   // Toggle side menu
   const toggleSideMenu = useCallback(() => {
-    setIsSideMenuOpen(prev => !prev);
-  }, []);
+    setIsSideMenuOpen(prev => {
+      const newIsOpen = !prev;
+      if (newIsOpen) {
+        markMenuOpened();
+      }
+      return newIsOpen;
+    });
+  }, [markMenuOpened]);
   
   // Utility function to safely access Electron APIs with fallbacks
   const getElectronAPI = useCallback(() => {
@@ -934,6 +935,27 @@ const MainWindowNew: React.FC = () => {
   }, [conversation, isMobile, isSideMenuOpen, toggleSideMenu]);
   // --- END ADDED ---
   
+  // Auto-trigger onboarding for first-time users
+  useEffect(() => {
+    if (isFirstTimeUser && !hasCompletedOnboarding && !shouldShowOnboarding) {
+      console.log('[MainWindowNew] First-time user detected, triggering onboarding');
+      // Delay slightly to ensure UI is fully rendered
+      setTimeout(() => {
+        setShouldShowOnboarding(true);
+      }, 1000);
+    }
+  }, [isFirstTimeUser, hasCompletedOnboarding, shouldShowOnboarding, setShouldShowOnboarding]);
+  
+  // Handle onboarding completion
+  const handleOnboardingComplete = useCallback(() => {
+    completeOnboarding();
+  }, [completeOnboarding]);
+  
+  // Handle onboarding close
+  const handleOnboardingClose = useCallback(() => {
+    setShouldShowOnboarding(false);
+  }, [setShouldShowOnboarding]);
+  
   // Render loading state if not initialized or authenticating
   if (conversation.isLoading) {
     return (
@@ -1074,11 +1096,11 @@ const MainWindowNew: React.FC = () => {
         </Box>
       </Box>
       
-      {/* Onboarding Guide for first-time users */}
+      {/* Onboarding Guide */}
       <OnboardingGuide
-        open={isOnboardingOpen}
-        onClose={closeOnboarding}
-        onSkip={skipOnboarding}
+        isOpen={shouldShowOnboarding}
+        onClose={handleOnboardingClose}
+        onComplete={handleOnboardingComplete}
       />
     </Box>
   );
