@@ -414,6 +414,24 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
         elif output_format == 'xlsx':
             return _convert_markdown_to_xlsx(markdown_content, output_path, options)
         
+        # For PDF and DOCX conversion, handle image references specially
+        temp_md_file = markdown_file
+        temp_dir = None
+        images_resolved = False
+        
+        if output_format in ['pdf', 'docx']:
+            # Create temporary directory for image handling
+            temp_dir = tempfile.mkdtemp(prefix=f'{output_format}_conversion_')
+            temp_md_file = os.path.join(temp_dir, 'document.md')
+            
+            # Copy and resolve image references
+            resolved_content = _resolve_and_copy_images(markdown_content, markdown_file, temp_dir)
+            images_resolved = True
+            
+            # Write updated markdown to temp file with UTF-8 encoding
+            with open(temp_md_file, 'w', encoding='utf-8') as f:
+                f.write(resolved_content)
+        
         # For standard formats (pdf, docx, html), use pandoc
         # Check if pandoc is available
         try:
@@ -426,7 +444,7 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
             }
         
         # Prepare pandoc command
-        cmd = [pandoc_exe, markdown_file, '-o', output_path]
+        cmd = [pandoc_exe, temp_md_file, '-o', output_path]
         
         # Process options and add format-specific settings
         if options is None:
@@ -434,18 +452,276 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
         
         # Add format-specific options
         if output_format == 'pdf':
-            # Basic PDF conversion options
+            # Use wkhtmltopdf as the only PDF engine for PyInstaller compatibility
             pdf_engine = options.get('pdf_engine', 'wkhtmltopdf')
             cmd.extend(['--pdf-engine', pdf_engine])
             
-            # Add CSS styling if provided
-            if 'css' in options:
+            # Add resource path for images if using temporary directory
+            if temp_dir:
+                cmd.extend(['--resource-path', temp_dir])
+                # Also add the original markdown directory for fallback
+                md_dir = os.path.dirname(os.path.abspath(markdown_file))
+                cmd.extend(['--resource-path', md_dir])
+            
+            # Enable standalone mode for better formatting
+            cmd.append('--standalone')
+            
+            # Add UTF-8 encoding variables for better character support
+            cmd.extend(['--variable', 'fontenc=T1'])
+            cmd.extend(['--variable', 'inputenc=utf8'])
+            
+            # Add table of contents if requested
+            if options.get('toc', False):
+                cmd.append('--toc')
+                cmd.extend(['--toc-depth', str(options.get('toc_depth', 3))])
+            
+            # Add CSS styling - use provided CSS or create default professional styling
+            css_provided = False
+            if 'css' in options and options['css']:
                 cmd.extend(['--css', options['css']])
+                css_provided = True
+            else:
+                # Create default professional CSS for better typography
+                default_css_content = """
+/* Professional PDF Styling with Better Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+* {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.6;
+    color: #2c3e50;
+    max-width: none;
+    margin: 0;
+    padding: 20pt;
+    background: white;
+    font-weight: 400;
+}
+
+/* Headings with better typography */
+h1, h2, h3, h4, h5, h6 {
+    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+    font-weight: 600;
+    color: #1a202c;
+    margin-top: 24pt;
+    margin-bottom: 12pt;
+    line-height: 1.3;
+    page-break-after: avoid;
+}
+
+h1 { 
+    font-size: 24pt; 
+    font-weight: 700;
+    border-bottom: 2pt solid #e2e8f0;
+    padding-bottom: 8pt;
+    margin-bottom: 16pt;
+}
+
+h2 { 
+    font-size: 20pt; 
+    font-weight: 600;
+    border-bottom: 1pt solid #e2e8f0;
+    padding-bottom: 6pt;
+}
+
+h3 { font-size: 16pt; font-weight: 600; }
+h4 { font-size: 14pt; font-weight: 600; }
+h5 { font-size: 12pt; font-weight: 600; }
+h6 { font-size: 11pt; font-weight: 600; }
+
+/* Paragraphs */
+p {
+    margin-bottom: 12pt;
+    text-align: justify;
+    hyphens: auto;
+}
+
+/* Code styling with professional monospace font */
+code, pre {
+    font-family: "JetBrains Mono", "Fira Code", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
+    font-size: 9.5pt;
+    background-color: #f7fafc;
+    border: 1pt solid #e2e8f0;
+    border-radius: 3pt;
+}
+
+code {
+    padding: 2pt 4pt;
+    color: #e53e3e;
+    font-weight: 500;
+}
+
+pre {
+    padding: 12pt;
+    margin: 12pt 0;
+    overflow-x: auto;
+    line-height: 1.4;
+    color: #2d3748;
+}
+
+pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: inherit;
+    font-weight: 400;
+}
+
+/* Lists */
+ul, ol {
+    margin: 12pt 0;
+    padding-left: 20pt;
+}
+
+li {
+    margin-bottom: 6pt;
+    line-height: 1.5;
+}
+
+/* Tables */
+table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16pt 0;
+    font-size: 10pt;
+    page-break-inside: avoid;
+}
+
+th, td {
+    border: 1pt solid #cbd5e0;
+    padding: 8pt 12pt;
+    text-align: left;
+    vertical-align: top;
+}
+
+th {
+    background-color: #f7fafc;
+    font-weight: 600;
+    color: #2d3748;
+}
+
+tr:nth-child(even) {
+    background-color: #fafafa;
+}
+
+/* Blockquotes */
+blockquote {
+    margin: 16pt 0;
+    padding: 12pt 16pt;
+    border-left: 4pt solid #4299e1;
+    background-color: #f7fafc;
+    font-style: italic;
+    color: #4a5568;
+}
+
+/* Links */
+a {
+    color: #3182ce;
+    text-decoration: none;
+    font-weight: 500;
+}
+
+a:hover {
+    text-decoration: underline;
+}
+
+/* Images */
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 16pt auto;
+    border-radius: 4pt;
+    box-shadow: 0 2pt 8pt rgba(0,0,0,0.1);
+}
+
+/* Page breaks */
+.page-break {
+    page-break-before: always;
+}
+
+/* Print-specific adjustments */
+@media print {
+    body {
+        font-size: 10pt;
+        line-height: 1.5;
+    }
+    
+    h1 { font-size: 18pt; }
+    h2 { font-size: 16pt; }
+    h3 { font-size: 14pt; }
+    h4 { font-size: 12pt; }
+    h5, h6 { font-size: 11pt; }
+    
+    img {
+        max-width: 100%;
+        page-break-inside: avoid;
+    }
+    
+    table {
+        font-size: 9pt;
+    }
+    
+    th, td {
+        padding: 6pt 8pt;
+    }
+}
+
+/* Emoji and special character support */
+.emoji {
+    font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", emoji, sans-serif;
+    font-size: 1.1em;
+}
+"""
+                
+                # Write CSS to temporary file
+                css_file = tempfile.NamedTemporaryFile(mode='w', suffix='.css', delete=False, encoding='utf-8')
+                css_file.write(default_css_content)
+                css_file.close()
+                
+                cmd.extend(['--css', css_file.name])
+                logger.info(f"Using default professional CSS for PDF styling")
+            
+            # Add margin settings for better layout
+            cmd.extend(['--variable', 'margin-top=2cm'])
+            cmd.extend(['--variable', 'margin-bottom=2cm'])
+            cmd.extend(['--variable', 'margin-left=2cm'])
+            cmd.extend(['--variable', 'margin-right=2cm'])
+            
+            # Specific wkhtmltopdf options for better image and Unicode support
+            cmd.extend(['--variable', 'geometry:margin=2cm'])
+            cmd.extend(['--pdf-engine-opt', '--encoding'])
+            cmd.extend(['--pdf-engine-opt', 'UTF-8'])
+            cmd.extend(['--pdf-engine-opt', '--enable-local-file-access'])
+            cmd.extend(['--pdf-engine-opt', '--load-error-handling'])
+            cmd.extend(['--pdf-engine-opt', 'ignore'])
+            
+            logger.info(f"Using PDF engine: {pdf_engine}")
                 
         elif output_format == 'docx':
             # Word document options
             if 'reference_doc' in options:
                 cmd.extend(['--reference-doc', options['reference_doc']])
+            
+            # Add resource path for images
+            if temp_dir:
+                cmd.extend(['--resource-path', temp_dir])
+                # Also add the original markdown directory
+                md_dir = os.path.dirname(os.path.abspath(markdown_file))
+                cmd.extend(['--resource-path', md_dir])
+            
+            # Enable standalone mode
+            cmd.append('--standalone')
+            
+            # Add table of contents if requested
+            if options.get('toc', False):
+                cmd.append('--toc')
+                cmd.extend(['--toc-depth', str(options.get('toc_depth', 3))])
                 
         elif output_format == 'html':
             # HTML options
@@ -453,6 +729,9 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
                 cmd.append('--standalone')
             if 'css' in options:
                 cmd.extend(['--css', options['css']])
+            
+            # Add UTF-8 meta charset
+            cmd.extend(['--metadata', 'charset=utf-8'])
         
         # Add metadata options
         if 'metadata' in options:
@@ -464,22 +743,56 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
             for key, value in options['variables'].items():
                 cmd.extend(['--variable', f'{key}={value}'])
         
+        # Add filter for better Unicode support
+        cmd.extend(['--filter', 'pandoc-crossref']) if options.get('crossref', False) else None
+        
         logger.info(f"Converting {markdown_file} to {output_path} (format: {output_format})")
         logger.debug(f"Pandoc command: {' '.join(cmd)}")
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
-        # Run conversion
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        # Set up environment with proper encoding
+        env = os.environ.copy()
+        env['LC_ALL'] = 'en_US.UTF-8'
+        env['LANG'] = 'en_US.UTF-8'
         
-        return {
-            "success": True,
-            "file_path": output_path,
-            "format": output_format,
-            "message": f"Successfully converted Markdown to {output_format}",
-            "security_note": security_message if security_message else None
-        }
+        # Add bundled binaries to PATH if available
+        if getattr(sys, 'frozen', False):  # PyInstaller bundle
+            bundled_bin_dir = os.path.abspath(os.path.join(os.path.dirname(sys.executable), '..', 'bin'))
+            if os.path.isdir(bundled_bin_dir):
+                env["PATH"] = bundled_bin_dir + os.pathsep + env.get("PATH", "")
+                logger.info(f"Added bundled bin directory to PATH: {bundled_bin_dir}")
+        
+        try:
+            # Run conversion with timeout
+            result = subprocess.run(
+                cmd, 
+                check=True, 
+                capture_output=True, 
+                text=True, 
+                env=env,
+                timeout=300  # 5 minute timeout
+            )
+            
+            return {
+                "success": True,
+                "file_path": output_path,
+                "format": output_format,
+                "message": f"Successfully converted Markdown to {output_format}",
+                "security_note": security_message if security_message else None,
+                "images_processed": images_resolved
+            }
+            
+        finally:
+            # Clean up temporary directory if created
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                    logger.debug(f"Cleaned up temporary directory: {temp_dir}")
+                except Exception as e:
+                    logger.warning(f"Could not clean up temporary directory {temp_dir}: {e}")
         
     except subprocess.CalledProcessError as e:
         error_message = e.stderr if e.stderr else str(e)
@@ -487,6 +800,12 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
         return {
             "success": False,
             "error": f"Conversion error: {error_message}"
+        }
+    except subprocess.TimeoutExpired:
+        logger.error(f"Conversion timeout for {output_format}")
+        return {
+            "success": False,
+            "error": f"Conversion timed out after 5 minutes"
         }
     except Exception as e:
         logger.error(f"Error converting from Markdown: {str(e)}")
@@ -742,6 +1061,180 @@ def _convert_markdown_to_xlsx(markdown_content: str, output_path: str, options: 
             "success": False,
             "error": f"Excel conversion error: {str(e)}"
         }
+
+def _resolve_and_copy_images(markdown_content: str, markdown_file: str, temp_dir: str) -> str:
+    """
+    Resolve image references in markdown content and copy images to temporary directory.
+    
+    WORKSPACE-FIRST APPROACH:
+    1. Check workspace root first (most common case)
+    2. Check relative to markdown file
+    3. Check parent directories
+    4. Check absolute paths
+    
+    Args:
+        markdown_content: Original markdown content
+        markdown_file: Path to the original markdown file
+        temp_dir: Temporary directory to copy images to
+        
+    Returns:
+        Updated markdown content with resolved image paths
+    """
+    import re
+    import shutil
+    import glob
+    
+    logger.info(f"[_resolve_and_copy_images] Starting image resolution for {markdown_file}")
+    
+    def resolve_and_copy_image(match):
+        alt_text = match.group(1)
+        relative_path = match.group(2)
+        
+        logger.debug(f"[_resolve_and_copy_images] Processing image: {relative_path}")
+        
+        # Skip if already absolute URL (http/https/file) or data URL
+        if re.match(r'^(https?|file)://', relative_path) or relative_path.startswith('data:'):
+            logger.debug(f"[_resolve_and_copy_images] Skipping absolute/data URL: {relative_path}")
+            return match.group(0)  # Return unchanged
+        
+        # Get workspace directories for primary search
+        workspace_dirs = []
+        try:
+            if SHARED_WORKSPACE_AVAILABLE:
+                from core.shared_workspace import get_shared_workspace
+                workspace = get_shared_workspace()
+                workspace_dirs.append(str(workspace.workspace_root))
+            
+            # Add unified workspace as fallback
+            from mcp_local.core.shared_workspace import SharedWorkspaceManager
+            unified_workspace = SharedWorkspaceManager._get_unified_workspace_path("default")
+            workspace_dirs.append(str(unified_workspace))
+        except Exception as e:
+            logger.warning(f"Could not access workspace for image resolution: {e}")
+            # Add fallback workspace path
+            workspace_dirs.append('/tmp/denker_workspace/default')
+        
+        # Try to find the actual image file - WORKSPACE-FIRST APPROACH
+        possible_paths = []
+        
+        # 1. PRIORITY: Workspace root (most common for our tools)
+        for workspace_dir in workspace_dirs:
+            if os.path.exists(workspace_dir):
+                # Try just the filename in workspace root (most common case)
+                filename = os.path.basename(relative_path)
+                possible_paths.append(os.path.join(workspace_dir, filename))
+                
+                # Try the relative path in workspace
+                possible_paths.append(os.path.join(workspace_dir, relative_path))
+                
+                # Remove ./ prefix and try again
+                if relative_path.startswith('./'):
+                    clean_path = relative_path[2:]
+                    possible_paths.append(os.path.join(workspace_dir, clean_path))
+        
+        # 2. Relative to the markdown file (traditional approach)
+        md_dir = os.path.dirname(os.path.abspath(markdown_file))
+        possible_paths.append(os.path.join(md_dir, relative_path))
+        
+        # 3. Search parent directories (up to 2 levels)
+        current_dir = md_dir
+        for _ in range(2):  # Search up to 2 levels up
+            parent_dir = os.path.dirname(current_dir)
+            if parent_dir == current_dir:  # Reached root
+                break
+            
+            # Try the image path relative to this parent
+            possible_paths.append(os.path.join(parent_dir, relative_path))
+            
+            # Try just filename in this parent
+            filename = os.path.basename(relative_path)
+            possible_paths.append(os.path.join(parent_dir, filename))
+            
+            current_dir = parent_dir
+        
+        # 4. If still not found, do a limited recursive search in workspace only
+        filename = os.path.basename(relative_path)
+        for workspace_dir in workspace_dirs:
+            if os.path.exists(workspace_dir) and filename:
+                try:
+                    # Use glob to search for the file recursively (limited depth)
+                    search_pattern = os.path.join(workspace_dir, '**', filename)
+                    matches = glob.glob(search_pattern, recursive=True)
+                    for match_path in matches[:3]:  # Limit to first 3 matches
+                        if os.path.isfile(match_path):
+                            possible_paths.append(match_path)
+                except Exception as e:
+                    logger.debug(f"Could not search recursively in {workspace_dir}: {e}")
+        
+        # Remove duplicates while preserving order
+        seen = set()
+        unique_paths = []
+        for path in possible_paths:
+            normalized_path = os.path.normpath(path)
+            if normalized_path not in seen:
+                seen.add(normalized_path)
+                unique_paths.append(path)
+        
+        logger.debug(f"[_resolve_and_copy_images] Searching {len(unique_paths)} possible paths for {relative_path}")
+        
+        # Find the first existing path
+        source_path = None
+        for path in unique_paths[:10]:  # Limit search to first 10 paths
+            if os.path.exists(path) and os.path.isfile(path):
+                source_path = path
+                logger.debug(f"[_resolve_and_copy_images] Found image at: {source_path}")
+                break
+        
+        if source_path:
+            try:
+                # Validate that it's actually an image file
+                valid_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp', '.tiff', '.ico'}
+                file_ext = os.path.splitext(source_path)[1].lower()
+                if file_ext not in valid_extensions:
+                    logger.warning(f"File {source_path} does not appear to be a valid image (extension: {file_ext})")
+                    return match.group(0)  # Return original
+                
+                # Check file size (basic validation)
+                file_size = os.path.getsize(source_path)
+                if file_size < 50:  # Very small files are likely corrupted
+                    logger.warning(f"Image file {source_path} is suspiciously small ({file_size} bytes)")
+                    return match.group(0)  # Return original
+                
+                # Copy image to temp directory
+                filename = os.path.basename(source_path)
+                dest_path = os.path.join(temp_dir, filename)
+                
+                # Avoid copying if already exists (handle duplicates)
+                counter = 1
+                base_name, ext = os.path.splitext(filename)
+                original_filename = filename
+                while os.path.exists(dest_path):
+                    new_filename = f"{base_name}_{counter}{ext}"
+                    dest_path = os.path.join(temp_dir, new_filename)
+                    filename = new_filename
+                    counter += 1
+                
+                shutil.copy2(source_path, dest_path)
+                logger.info(f"Copied image for conversion: {source_path} -> {dest_path}")
+                
+                # Return updated markdown with new filename (relative to temp directory)
+                return f"![{alt_text}]({filename})"
+                
+            except Exception as e:
+                logger.warning(f"Could not copy image {source_path}: {e}")
+                return match.group(0)  # Return original on error
+        else:
+            # If not found, return original (will result in broken image)
+            logger.warning(f"Image not found for conversion: {relative_path} (searched {len(unique_paths)} locations)")
+            if len(unique_paths) <= 5:
+                logger.debug(f"Searched locations: {unique_paths}")
+            return match.group(0)  # Return original
+    
+    # Process all image references in the markdown content
+    image_pattern = r'!\[([^\]]*)\]\(([^)]+)\)'
+    updated_content = re.sub(image_pattern, resolve_and_copy_image, markdown_content)
+    
+    return updated_content
 
 # Additional helper functions
 

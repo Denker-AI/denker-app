@@ -5,6 +5,8 @@ import { api } from '../services/api';
 import { LoadingScreen } from '../components/Common';
 import { clearUserInfoCache, getUserInfoCached } from '../utils/user-info-cache';
 import { getCachedAccessToken, clearTokenCache } from '../utils/token-cache';
+import useConversationStore from '../store/conversationStore';
+import useFileStore from '../store/fileStore';
 
 // Define the shape of the user info (adjust based on claims)
 interface UserInfo {
@@ -46,6 +48,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Check if current path is subwindow using window.location
   const isSubWindow = window.location.hash === '#/subwindow';
+  const navigate = useNavigate();
   
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(!isSubWindow); // Skip loading for subwindow
@@ -168,6 +171,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return;
     }
     
+    // Switch stores to this user BEFORE checking email verification
+    // This ensures proper user-specific data loading
+    const userId = userInfo.sub;
+    if (userId) {
+      console.log('[AuthContext] Switching stores to user:', userId);
+      useConversationStore.getState().switchUser(userId);
+      useFileStore.getState().switchUser(userId);
+    }
+    
     // Check if email verification is required
     if (userInfo.email_verified === false) {
       console.log('[AuthContext] Email not verified, redirecting to verification page');
@@ -177,7 +189,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setIsAuthenticated(false);
       setUser(null);
       // Redirect to email verification page
-      window.location.href = '/email-verification';
+      navigate('/email-verification');
       return;
     }
     
@@ -197,7 +209,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('[AuthContext] postLocalLogin failed during auth success, continuing anyway:', err);
       setError('Coordinator initialization may have failed. You may need to restart manually.');
     }
-  }, [isAuthenticated, fetchUserInfo, postLocalLogin, checkFirstTimeLogin]);
+  }, [isAuthenticated, fetchUserInfo, postLocalLogin, checkFirstTimeLogin, navigate]);
 
   // Manual restart coordinator function
   const restartCoordinator = useCallback(async () => {
@@ -268,6 +280,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       // Clear both token and user info caches
       clearTokenCache();
       clearUserInfoCache();
+      
+      // Clear stores by switching to no user
+      console.log('[AuthContext] Clearing stores on logout');
+      useConversationStore.getState().switchUser(null);
+      useFileStore.getState().switchUser(null);
       
       // Call Electron logout if available
       if ((window as any).electron?.logout) {
@@ -445,7 +462,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             errorInfo?.error === 'access_denied' && errorMessage.includes('email')) {
           console.log('[AuthContext] Email verification required, redirecting...');
           // Redirect to email verification page
-          window.location.href = '/email-verification';
+          navigate('/email-verification');
           return;
         }
         

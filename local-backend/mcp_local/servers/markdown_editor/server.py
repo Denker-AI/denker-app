@@ -24,6 +24,7 @@ import asyncio
 from typing import Dict, Any, List, Optional, Union
 from fastmcp import FastMCP
 from pathlib import Path
+from datetime import datetime
 
 # Add the parent directory to the path to import local modules
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -35,6 +36,7 @@ try:
     from .markdown_preview import preview_markdown, start_live_preview
     from .markdown_integration import add_chart_to_markdown, extract_table_from_markdown
     from .chart_generator import create_chart_tool, create_chart_from_data_tool, get_chart_template_tool
+    from .photo_generator import search_photos_tool, download_photo_tool, get_photo_categories_tool, search_and_download_photo_tool
 except ImportError:
     # Fallback for development environment
     from markdown_editor import create_markdown, edit_markdown, append_to_markdown
@@ -42,6 +44,7 @@ except ImportError:
     from markdown_preview import preview_markdown, start_live_preview
     from markdown_integration import add_chart_to_markdown, extract_table_from_markdown
     from chart_generator import create_chart_tool, create_chart_from_data_tool, get_chart_template_tool
+    from photo_generator import search_photos_tool, download_photo_tool, get_photo_categories_tool, search_and_download_photo_tool
 
 # Try to import shared workspace for multi-agent coordination
 try:
@@ -366,14 +369,16 @@ def add_image(file_path: str, image_path: str, alt_text: str = "", position: Opt
     Add an image to a Markdown document.
     
     Args:
-        file_path: Path to the Markdown file or workspace file ID
-        image_path: Path to the image file or workspace file ID
+        file_path: Path to the Markdown file (filename only for workspace files, like "report.md")
+        image_path: Path to the image file (filename only for workspace files, like "photo.jpg")
         alt_text: Alternative text for the image
         position: Optional line number to insert at (appends if None)
         
     Returns:
         Information about the updated file
     """
+    logger.info(f"[add_image] Adding image {image_path} to {file_path}")
+    
     # Try to resolve both file paths from workspace
     resolved_file_path = find_workspace_file(file_path)
     if resolved_file_path:
@@ -386,7 +391,7 @@ def add_image(file_path: str, image_path: str, alt_text: str = "", position: Opt
         image_path = resolved_image_path
         logger.info(f"Resolved image file path from workspace: {image_path}")
     elif not os.path.isabs(image_path):
-        # If not found and not absolute, try additional workspace lookup
+        # If not found in workspace and not absolute, try workspace lookup
         if SHARED_WORKSPACE_AVAILABLE:
             try:
                 workspace = get_shared_workspace()
@@ -400,14 +405,14 @@ def add_image(file_path: str, image_path: str, alt_text: str = "", position: Opt
             except Exception as e:
                 logger.warning(f"Could not locate image via workspace: {e}")
         
-        # FIXED: Always use unified temp workspace as fallback for image path
+        # Fallback to unified temp workspace for image path
         if not os.path.exists(image_path):
             try:
                 from mcp_local.core.shared_workspace import SharedWorkspaceManager
                 fallback_path = SharedWorkspaceManager._get_unified_workspace_path("default")
                 filename_only = os.path.basename(image_path)
                 candidate_path = str(fallback_path / filename_only)
-                logger.info(f"[add_image] Using unified temp workspace for image: {candidate_path}")
+                logger.info(f"[add_image] Checking unified temp workspace for image: {candidate_path}")
                 if os.path.exists(candidate_path):
                     image_path = candidate_path
                     logger.info(f"Found image via unified temp workspace: {image_path}")
@@ -423,7 +428,8 @@ def add_image(file_path: str, image_path: str, alt_text: str = "", position: Opt
     if not os.path.exists(image_path):
         return {
             "success": False,
-            "error": f"Image file not found: {image_path}"
+            "error": f"Image file not found: {image_path}",
+            "note": "Make sure the image is downloaded to workspace first using search_and_download_photo or create_chart"
         }
     
     # Simple validation - just check if file is not empty and can be opened
@@ -455,22 +461,31 @@ def add_image(file_path: str, image_path: str, alt_text: str = "", position: Opt
         logger.warning(f"Error during basic image validation: {e}")
         # Continue with basic existence check
     
-    # Calculate relative path from markdown file to image
-    image_relative_path = image_path
-    if os.path.isabs(image_path) and os.path.isabs(file_path):
+    # For workspace files, use simple filename-only relative path
+    image_relative_path = os.path.basename(image_path)
+    
+    # Check if both files are in the same workspace directory
+    md_dir = os.path.dirname(os.path.abspath(file_path))
+    img_dir = os.path.dirname(os.path.abspath(image_path))
+    
+    if md_dir == img_dir:
+        # Same directory - use filename only
+        image_relative_path = os.path.basename(image_path)
+        logger.info(f"Same directory detected, using filename: {image_relative_path}")
+    else:
+        # Different directories - calculate relative path
         try:
-            # Get directory of markdown file
-            md_dir = os.path.dirname(os.path.abspath(file_path))
             image_relative_path = os.path.relpath(image_path, md_dir)
-            logger.info(f"Calculated relative path: {image_relative_path}")
+            logger.info(f"Different directories, calculated relative path: {image_relative_path}")
             
-            # If they're in the same directory, just use the filename
-            if os.path.dirname(os.path.abspath(image_path)) == md_dir:
+            # If relative path goes up directories (../) but ends in same filename,
+            # prefer simple filename for workspace consistency
+            if image_relative_path.count('../') > 0 and os.path.basename(image_relative_path) == os.path.basename(image_path):
+                logger.info(f"Using simple filename instead of complex relative path for workspace consistency")
                 image_relative_path = os.path.basename(image_path)
-                logger.info(f"Same directory, using filename: {image_relative_path}")
         except Exception as e:
             logger.warning(f"Could not calculate relative path: {e}")
-            # Fallback to just the filename if relative path calculation fails
+            # Fallback to just the filename
             image_relative_path = os.path.basename(image_path)
     
     # Create markdown image syntax
@@ -644,7 +659,7 @@ async def create_table_with_theme(
     headers: List[str],
     data: List[List[str]],
     title: Optional[str] = None,
-    theme: str = "modern",
+    theme: str = "professional",
     alignment: Optional[List[str]] = None,
     file_path: Optional[str] = None
 ) -> Dict[str, Any]:
@@ -767,19 +782,25 @@ async def create_chart(chart_config: Dict[str, Any],
     result = await generator.create_chart(chart_config, output_path)
     
     # Register in shared workspace if successful
-    if result.get("success") and result.get("file_path"):
-        full_path = get_workspace_path(result["file_path"])
-        file_id = register_workspace_file(
-            file_path=full_path,
-            metadata={
-                "type": "chart_image",
-                "chart_type": chart_config.get("type", "unknown"),
-                "format": "png"
-            }
-        )
-        if file_id:
-            result["file_id"] = file_id
-            result["message"] = result.get("message", "") + f" (Workspace ID: {file_id})"
+    if result.get("success"):
+        # Chart generator returns 'chart_path' and 'filename' - both are just filenames
+        chart_file = result.get("chart_path") or result.get("filename")
+        if chart_file:
+            full_path = get_workspace_path(chart_file)
+            file_id = register_workspace_file(
+                file_path=full_path,
+                metadata={
+                    "type": "chart_image",
+                    "chart_type": chart_config.get("type", "unknown"),
+                    "format": "png"
+                }
+            )
+            if file_id:
+                result["file_id"] = file_id
+                result["message"] = result.get("message", "") + f" (Workspace ID: {file_id})"
+            
+            # Standardize the return field as 'file_path' for consistency with other tools
+            result["file_path"] = chart_file
     
     return result
 
@@ -790,8 +811,8 @@ async def create_chart_from_data(chart_type: str,
                                y_axis: str,
                                 title: Optional[str] = None,
                                output_path: Optional[str] = None,
-                               color_theme: str = 'modern',
-                               style_theme: str = 'modern') -> Dict[str, Any]:
+                               color_theme: str = 'professional',
+                               style_theme: str = 'elegant') -> Dict[str, Any]:
     """
     Create a chart from tabular data with beautiful styling.
     
@@ -859,6 +880,82 @@ def get_chart_template(chart_type: str) -> Dict[str, Any]:
     return get_chart_template_tool(chart_type)
 
 @app.tool()
+async def search_photos(query: str, 
+                       per_page: int = 10, 
+                       orientation: Optional[str] = None,
+                       color: Optional[str] = None,
+                       category: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Search for photos on Unsplash (for browsing only - use search_and_download_photo for actual use).
+    
+    Args:
+        query: Search query
+        per_page: Number of results (max 30)
+        orientation: "landscape", "portrait", or "squarish"
+        color: Color filter like "black_and_white", "black", "white", "yellow", "orange", "red", "purple", "magenta", "green", "teal", "blue"
+        category: Category hint for better results
+        
+    Returns:
+        Search results with photo IDs and metadata
+    """
+    return await search_photos_tool(query, per_page=per_page, orientation=orientation, color=color, category=category)
+
+@app.tool()
+async def download_photo(photo_id: str, 
+                        size: str = "regular",
+                        file_name: Optional[str] = None,
+                        add_credit: bool = True) -> Dict[str, Any]:
+    """
+    Download a specific photo by ID from Unsplash search results.
+    
+    Args:
+        photo_id: Unique ID of the photo from search results
+        size: Photo size - "raw", "full", "regular", "small", "thumb" (default: "regular")
+        file_name: Optional custom filename (will use photo description if not provided)
+        add_credit: Whether to add photographer credit to filename (default: True)
+        
+    Returns:
+        Information about the downloaded photo including local path
+    """
+    return await download_photo_tool(photo_id, size, file_name, add_credit)
+
+@app.tool()
+def get_photo_categories() -> Dict[str, Any]:
+    """
+    Get available photo categories for filtering searches.
+    
+    Returns:
+        List of available photo categories and search tips
+    """
+    return get_photo_categories_tool()
+
+@app.tool()
+async def search_and_download_photo(query: str,
+                                   size: str = "regular",
+                                   orientation: Optional[str] = None,
+                                   category: Optional[str] = None,
+                                   filename: Optional[str] = None) -> Dict[str, Any]:
+    """
+    🎯 RECOMMENDED: Search for and download a photo in one step (like chart generation).
+    This is the preferred tool for getting images for documents.
+    
+    Args:
+        query: Search query for the photo (be descriptive for better results)
+        size: Photo size - "thumbnail", "small", "regular", "large", "full" (default: "regular")
+        orientation: Photo orientation - "landscape", "portrait", "squarish" (optional)
+        category: Photo category hint - "nature", "business", "technology", "lifestyle", "architecture", "abstract"
+        filename: Custom filename (will generate descriptive name if not provided)
+        
+    Returns:
+        Downloaded photo information with filename for use in documents
+        
+    Usage:
+        1. Use this tool to get a photo: photo = await search_and_download_photo("business meeting")
+        2. Use add_image tool to add it to document: add_image("document.md", photo["file_path"], "Business meeting photo")
+    """
+    return await search_and_download_photo_tool(query, size, orientation, category, filename)
+
+@app.tool()
 async def create_document_with_chart(content: str,
                                    chart_config: Dict[str, Any],
                                     file_path: Optional[str] = None,
@@ -889,7 +986,13 @@ async def create_document_with_chart(content: str,
         if not chart_result.get("success"):
             return chart_result
         
-        chart_file = chart_result["file_path"]
+        # Chart generator returns 'chart_path' and 'filename' - both are just filenames
+        chart_file = chart_result.get("chart_path") or chart_result.get("filename")
+        if not chart_file:
+            return {
+                "success": False,
+                "error": "Chart creation succeeded but no filename returned"
+            }
         
         # Create the markdown document
         if chart_position == "start":
@@ -947,15 +1050,18 @@ async def create_document_with_chart(content: str,
 @app.tool()
 def get_filesystem_path(file_reference: str) -> Dict[str, Any]:
     """
-    Get filesystem-compatible path for a file reference.
+    Get filesystem-compatible relative path for a workspace file reference.
+    
+    This tool bridges markdown-editor workspace files with filesystem server operations.
+    Returns relative paths suitable for use with filesystem tools like get_file_info, move_file, etc.
     
     Args:
-        file_reference: File ID, filename, or partial path
+        file_reference: File ID, filename, or partial path from workspace
         
     Returns:
-        Filesystem path information
+        Filesystem-compatible relative path information for cross-server operations
     """
-    logger.info(f"[get_filesystem_path] Looking for file: {file_reference}")
+    logger.info(f"[get_filesystem_path] Looking for workspace file: {file_reference}")
     
     if SHARED_WORKSPACE_AVAILABLE:
         try:
@@ -964,49 +1070,44 @@ def get_filesystem_path(file_reference: str) -> Dict[str, Any]:
             # Get absolute path
             absolute_path = workspace.find_file(file_reference)
             
-            # Get filesystem-friendly relative path
+            # Get filesystem-friendly relative path 
             relative_path = workspace.get_filesystem_friendly_path(file_reference)
             
             if absolute_path and relative_path:
-                logger.info(f"[get_filesystem_path] Found via workspace: {absolute_path}")
+                logger.info(f"[get_filesystem_path] Found workspace file: {relative_path}")
+                
                 return {
                     "success": True,
-                    "absolute_path": str(absolute_path),
                     "relative_path": relative_path,
                     "workspace_root": str(workspace.workspace_root),
-                    "exists": absolute_path.exists()
+                    "filename": os.path.basename(str(absolute_path)),
+                    "exists_in_workspace": True,
+                    "usage": f"Use with filesystem tools like: filesystem.get_file_info('{relative_path}')"
                 }
         except Exception as e:
-            logger.warning(f"Could not resolve filesystem path: {e}")
+            logger.warning(f"Could not access shared workspace: {e}")
     
-    # FIXED: Always use consistent temp workspace as fallback 
+    # Fallback to unified temp workspace 
     filename_only = os.path.basename(file_reference)
     fallback_dir = '/tmp/denker_workspace/default'
-    absolute_path = os.path.join(fallback_dir, filename_only)
-    logger.info(f"[get_filesystem_path] Using consistent temp workspace: {absolute_path}")
     
-    if os.path.exists(absolute_path):
-        logger.info(f"[get_filesystem_path] Found file: {absolute_path}")
+    if os.path.exists(os.path.join(fallback_dir, filename_only)):
+        logger.info(f"[get_filesystem_path] Found in temp workspace: {filename_only}")
         return {
             "success": True,
-            "absolute_path": absolute_path,
             "relative_path": filename_only,
             "workspace_root": fallback_dir,
-            "exists": True
+            "filename": filename_only,
+            "exists_in_workspace": True,
+            "usage": f"Use with filesystem tools like: filesystem.get_file_info('{filename_only}')"
         }
     else:
-        logger.info(f"[get_filesystem_path] File not found at: {absolute_path}")
+        logger.info(f"[get_filesystem_path] File not found in workspace: {file_reference}")
         return {
             "success": False,
-            "error": f"File not found: {file_reference}",
-            "searched_path": absolute_path
+            "error": f"File not found in workspace: {file_reference}",
+            "note": "File must exist in workspace before getting filesystem path"
         }
-    
-    logger.info(f"[get_filesystem_path] No workspace directory found")
-    return {
-        "success": False,
-        "error": "Could not resolve filesystem path - no workspace available"
-    }
 
 @app.tool()
 def analyze_document_structure(file_path: str) -> Dict[str, Any]:

@@ -64,7 +64,7 @@ marked.setOptions({
 // Type declaration for window object
 declare global {
   interface Window {
-    electronAPI?: {
+    electron?: {
       openFile: (filePath?: string) => Promise<{ success: boolean; error?: string } | void>;
     };
     openFileInSystem: (filePath: string) => Promise<void>;
@@ -117,10 +117,10 @@ const isFilePath = (text: string): boolean => {
 // Function to open file in system
 const openFileInSystem = async (filePath: string) => {
   try {
-    // Use the Electron API if available
-    if (window.electronAPI?.openFile) {
+    // Use the Electron API if available - FIXED: Use window.electron instead of window.electronAPI
+    if (window.electron?.openFile) {
       console.log(`[FilePath] Opening file via Electron API: ${filePath}`);
-      const result = await window.electronAPI.openFile(filePath);
+      const result = await window.electron.openFile(filePath);
       
       if (result && !result.success) {
         throw new Error(result.error || 'Failed to open file');
@@ -165,7 +165,7 @@ window.openImageInBrowser = openImageInBrowser;
 // Override text rendering to detect and make file paths clickable
 const originalTextRenderer = renderer.text;
 renderer.text = (text) => {
-  // Check if the text looks like a file path
+  // First check if the entire text is a file path
   if (isFilePath(text)) {
     console.log(`[FilePath] Rendering clickable path: "${text}"`);
     return `<span 
@@ -186,6 +186,37 @@ renderer.text = (text) => {
       onmouseout="this.style.backgroundColor='rgba(25, 118, 210, 0.1)'; this.style.borderColor='rgba(25, 118, 210, 0.2)'"
       title="Click to open file: ${text}"
     >${text}</span>`;
+  }
+  
+  // If not, check for file paths embedded within the text
+  const filePathRegex = /([\/~](?:[a-zA-Z0-9_\-\.\/\\]+)\.(?:md|txt|json|py|js|ts|tsx|jsx|html|css|scss|sass|less|png|jpg|jpeg|gif|svg|pdf|doc|docx|xls|xlsx|ppt|pptx|zip|tar|gz|csv|xml|yaml|yml|toml|ini|cfg|conf|log))(?=\s|$|[^\w\-\.])/gi;
+  
+  if (filePathRegex.test(text)) {
+    console.log(`[FilePath] Found embedded file paths in text: "${text}"`);
+    // Reset regex for replacement
+    filePathRegex.lastIndex = 0;
+    const processedText = text.replace(filePathRegex, (match, filePath) => {
+      console.log(`[FilePath] Making embedded path clickable: "${filePath}"`);
+      return `<span 
+        class="clickable-file-path" 
+        onclick="window.openFileInSystem('${filePath.replace(/'/g, "\\'")}')"
+        style="
+          color: #1976d2 !important; 
+          cursor: pointer; 
+          text-decoration: underline;
+          font-family: monospace;
+          background-color: rgba(25, 118, 210, 0.1);
+          padding: 2px 4px;
+          border-radius: 3px;
+          transition: all 0.2s ease;
+          border: 1px solid rgba(25, 118, 210, 0.2);
+        "
+        onmouseover="this.style.backgroundColor='rgba(25, 118, 210, 0.2)'; this.style.borderColor='rgba(25, 118, 210, 0.4)'"
+        onmouseout="this.style.backgroundColor='rgba(25, 118, 210, 0.1)'; this.style.borderColor='rgba(25, 118, 210, 0.2)'"
+        title="Click to open file: ${filePath}"
+      >${filePath}</span>`;
+    });
+    return processedText;
   }
   
   // For non-file-path text, use original renderer

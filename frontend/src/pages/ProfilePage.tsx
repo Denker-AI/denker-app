@@ -12,15 +12,16 @@ import {
   useTheme,
   CircularProgress,
   Alert,
+  Tooltip,
 } from '@mui/material';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
 import EditIcon from '@mui/icons-material/Edit';
 import LogoutIcon from '@mui/icons-material/Logout';
+import PhotoCameraIcon from '@mui/icons-material/PhotoCamera';
 import { useNavigate } from 'react-router-dom';
 
-// REMOVE custom hook
-// import useUser from '../hooks/useUser'; 
-import { useAuth } from '../auth/AuthContext'; // CORRECTED PATH: Changed ../../ to ../
+import { useAuth } from '../auth/AuthContext';
+import useUserPreferences, { UserPreferences } from '../hooks/useUserPreferences';
 
 // Utils
 import { stringToColor } from '../utils/helpers';
@@ -28,27 +29,40 @@ import { stringToColor } from '../utils/helpers';
 const ProfilePage: React.FC = () => {
   const theme = useTheme();
   const navigate = useNavigate();
-  // const { profile, updateUserProfile, isLoading, logout } = useUser(); // REMOVED
-  const { user, logout, isLoading } = useAuth(); // ADDED: Get user and logout from context
+  const { user, logout, isLoading } = useAuth();
   
-  // Local state for form values (keep for potential future editing)
+  // Use custom user preferences hook
+  const {
+    getDisplayName,
+    getAvatarUrl,
+    isUsingCustomDisplayName,
+    isUsingCustomAvatar,
+    saveUserPreferences,
+    originalName,
+    originalPicture,
+    email,
+  } = useUserPreferences();
+  
+  // Local state for form values
   const [formValues, setFormValues] = useState({
-    name: user?.name || '',
-    email: user?.email || '',
+    name: '',
+    email: '',
+    avatarUrl: '',
   });
   
-  // Keep track of initial load from context
+  // Load form values when user or preferences change
   useEffect(() => {
     if (user) {
       setFormValues({
-        name: user.name || '',
-        email: user.email || '',
+        name: getDisplayName,
+        email: email || '',
+        avatarUrl: getAvatarUrl,
       });
     }
-  }, [user]); // Update form if user object changes
+  }, [user, getDisplayName, getAvatarUrl, email]);
 
-  // Editing is disabled for now as update logic is removed
   const [isEditing, setIsEditing] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
   
   const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setFormValues({
@@ -57,17 +71,52 @@ const ProfilePage: React.FC = () => {
     });
   };
   
-  // Disable editing toggle for now
   const handleToggleEdit = () => {
-    // setIsEditing(!isEditing);
-    console.log('Profile editing is currently disabled.'); 
+    setIsEditing(!isEditing);
+    setSaveSuccess(false);
+    
+    if (!isEditing) {
+      // Entering edit mode - reset form values to current preferences
+      setFormValues({
+        name: getDisplayName,
+        email: email || '',
+        avatarUrl: getAvatarUrl,
+      });
+    }
   };
   
-  // Disable save functionality for now
   const handleSave = async () => {
-    // await updateUserProfile({ name: formValues.name });
-    // setIsEditing(false);
-    console.log('Profile saving is currently disabled.');
+    const newPreferences: UserPreferences = {
+      displayName: formValues.name.trim() || undefined,
+      avatarUrl: formValues.avatarUrl.trim() || undefined,
+    };
+    
+    // Only save if there are actual changes from Auth0 defaults
+    const preferencesToSave: UserPreferences = {};
+    if (newPreferences.displayName && newPreferences.displayName !== originalName) {
+      preferencesToSave.displayName = newPreferences.displayName;
+    }
+    if (newPreferences.avatarUrl && newPreferences.avatarUrl !== originalPicture) {
+      preferencesToSave.avatarUrl = newPreferences.avatarUrl;
+    }
+    
+    saveUserPreferences(preferencesToSave);
+    setIsEditing(false);
+    setSaveSuccess(true);
+    
+    // Hide success message after 3 seconds
+    setTimeout(() => setSaveSuccess(false), 3000);
+  };
+  
+  const handleCancel = () => {
+    setIsEditing(false);
+    setSaveSuccess(false);
+    // Reset form values to current preferences
+    setFormValues({
+      name: getDisplayName,
+      email: email || '',
+      avatarUrl: getAvatarUrl,
+    });
   };
   
   // Go back to main window
@@ -75,7 +124,7 @@ const ProfilePage: React.FC = () => {
     navigate('/');
   };
   
-  // Handle logout (uses logout from useAuth)
+  // Handle logout
   const handleLogout = () => {
     logout();
   };
@@ -95,7 +144,6 @@ const ProfilePage: React.FC = () => {
       .substring(0, 2);
   };
   
-  // Use isLoading from useAuth for initial loading state
   if (isLoading && !user) { 
     return (
       <Box
@@ -111,7 +159,6 @@ const ProfilePage: React.FC = () => {
     );
   }
 
-  // Handle case where user is still null after loading (shouldn't happen if route is protected)
   if (!user) {
      return (
       <Box sx={{ p: 3 }}>
@@ -152,6 +199,12 @@ const ProfilePage: React.FC = () => {
         </Button>
       </Box>
       
+      {saveSuccess && (
+        <Alert severity="success" sx={{ mb: 2 }}>
+          Profile updated successfully!
+        </Alert>
+      )}
+      
       <Paper
         elevation={0}
         sx={{
@@ -165,36 +218,62 @@ const ProfilePage: React.FC = () => {
         }}
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
-          <Avatar
-            src={user.picture} // Use user.picture from context
-            sx={{
-              width: 100,
-              height: 100,
-              mb: 2,
-              bgcolor: avatarColor,
-              color: theme.palette.mode === 'dark' 
-                ? theme.palette.grey[300] 
-                : theme.palette.grey[700],
-              fontSize: '2rem',
-              fontWeight: 500,
-              border: `2px solid ${theme.palette.divider}`,
-              '&:hover': {
-                bgcolor: theme.palette.mode === 'dark' 
-                  ? theme.palette.grey[700] 
-                  : theme.palette.grey[400],
-              }
-            }}
-          >
-            {/* Use user.name for initials, handle undefined case */}
-            {!user.picture && getInitials(user.name)}
-          </Avatar>
+          <Box sx={{ position: 'relative', mb: 2 }}>
+            <Avatar
+              src={getAvatarUrl}
+              sx={{
+                width: 100,
+                height: 100,
+                bgcolor: avatarColor,
+                color: theme.palette.mode === 'dark' 
+                  ? theme.palette.grey[300] 
+                  : theme.palette.grey[700],
+                fontSize: '2rem',
+                fontWeight: 500,
+                border: `2px solid ${theme.palette.divider}`,
+                '&:hover': {
+                  bgcolor: theme.palette.mode === 'dark' 
+                    ? theme.palette.grey[700] 
+                    : theme.palette.grey[400],
+                }
+              }}
+            >
+              {!getAvatarUrl && getInitials(getDisplayName)}
+            </Avatar>
+            
+            {isEditing && (
+              <Tooltip title="Edit avatar URL in the form below">
+                <IconButton
+                  sx={{
+                    position: 'absolute',
+                    bottom: -5,
+                    right: -5,
+                    bgcolor: theme.palette.primary.main,
+                    color: 'white',
+                    width: 32,
+                    height: 32,
+                    '&:hover': {
+                      bgcolor: theme.palette.primary.dark,
+                    }
+                  }}
+                >
+                  <PhotoCameraIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
           
           <Typography variant="h6" gutterBottom>
-            {user.name || 'N/A'} {/* Use user.name */} 
+            {getDisplayName || 'N/A'}
+            {isUsingCustomDisplayName && (
+              <Typography component="span" variant="caption" sx={{ ml: 1, opacity: 0.7 }}>
+                (Custom)
+              </Typography>
+            )}
           </Typography>
           
           <Typography variant="body2" color="text.secondary">
-            {user.email || 'N/A'} {/* Use user.email */}
+            {email || 'N/A'}
           </Typography>
         </Box>
         
@@ -207,8 +286,7 @@ const ProfilePage: React.FC = () => {
                 Personal Information
               </Typography>
               
-              {/* Disable Edit button for now */}
-              <IconButton onClick={handleToggleEdit} color={isEditing ? 'primary' : 'default'} disabled>
+              <IconButton onClick={handleToggleEdit} color={isEditing ? 'primary' : 'default'}>
                 <EditIcon />
               </IconButton>
             </Box>
@@ -218,14 +296,31 @@ const ProfilePage: React.FC = () => {
                 margin="normal"
                 fullWidth
                 id="name"
-                label="Name"
+                label="Display Name"
                 name="name"
-                value={formValues.name} // Use local state derived from user.name
+                value={formValues.name}
                 onChange={handleChange}
-                disabled={!isEditing} // Still controlled by isEditing state
+                disabled={!isEditing}
                 variant="outlined"
                 size="small"
+                helperText={isEditing ? "Custom display name (leave empty to use Auth0 name)" : undefined}
               />
+              
+              {isEditing && (
+                <TextField
+                  margin="normal"
+                  fullWidth
+                  id="avatarUrl"
+                  label="Avatar URL"
+                  name="avatarUrl"
+                  value={formValues.avatarUrl}
+                  onChange={handleChange}
+                  variant="outlined"
+                  size="small"
+                  helperText="Custom avatar image URL (leave empty to use Auth0 avatar)"
+                  placeholder="https://example.com/avatar.jpg"
+                />
+              )}
               
               <TextField
                 margin="normal"
@@ -233,23 +328,29 @@ const ProfilePage: React.FC = () => {
                 id="email"
                 label="Email"
                 name="email"
-                value={formValues.email} // Use local state derived from user.email
-                disabled // Email usually not editable
+                value={formValues.email}
+                disabled
                 variant="outlined"
                 size="small"
+                helperText="Email cannot be changed (managed by Auth0)"
               />
               
               {isEditing && (
-                <Button
-                  type="button" // Changed from submit to button as we use handleSave
-                  variant="contained"
-                  color="primary"
-                  sx={{ mt: 3, mb: 2 }}
-                  onClick={handleSave}
-                  disabled // Disable save button for now
-                >
-                  Save Changes
-                </Button>
+                <Box sx={{ mt: 3, mb: 2, display: 'flex', gap: 2 }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    onClick={handleSave}
+                  >
+                    Save Changes
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    onClick={handleCancel}
+                  >
+                    Cancel
+                  </Button>
+                </Box>
               )}
             </Box>
           </Grid>
@@ -263,6 +364,16 @@ const ProfilePage: React.FC = () => {
               <Typography variant="body2" gutterBottom>
                 <strong>Account ID:</strong> {(user as any).sub || (user as any).id || 'N/A'}
               </Typography>
+              
+              <Typography variant="body2" gutterBottom>
+                <strong>Original Name:</strong> {originalName || 'N/A'}
+              </Typography>
+              
+              {isUsingCustomAvatar && (
+                <Typography variant="body2" gutterBottom>
+                  <strong>Original Avatar:</strong> {originalPicture ? 'Set' : 'None'}
+                </Typography>
+              )}
               
               <Typography variant="body2" gutterBottom>
                 <strong>Account Type:</strong> Free

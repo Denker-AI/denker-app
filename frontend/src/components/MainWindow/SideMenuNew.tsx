@@ -60,6 +60,7 @@ import { format } from 'date-fns';
 // Hooks
 import { useMainWindowHooks } from '../../hooks';
 import { useAuth } from '../../auth/AuthContext';
+import useUserPreferences from '../../hooks/useUserPreferences';
 
 // Types
 import { Conversation } from '../../types/conversation';
@@ -77,6 +78,7 @@ interface SideMenuProps {
 const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, navbarHeight }) => {
   const theme = useTheme();
   const { user } = useAuth();
+  const { getDisplayName, getAvatarUrl } = useUserPreferences();
   const navigate = useNavigate();
   const searchInputRef = useRef<HTMLInputElement>(null);
   
@@ -726,8 +728,8 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
             onClick={handleOpenProfilePage}
           >
             <Avatar
-              src={user?.picture}
-              alt={user?.name || 'User'}
+              src={getAvatarUrl}
+              alt={getDisplayName || 'User'}
               sx={{ 
                 width: 40,
                 height: 40, 
@@ -735,10 +737,12 @@ const SideMenuNew: React.FC<SideMenuProps> = ({ isOpen, isMobile, setIsOpen, nav
                 bgcolor: theme.palette.primary.main,
                 fontSize: '1rem'
               }}
-            />
+            >
+              {!getAvatarUrl && getDisplayName ? getDisplayName.charAt(0).toUpperCase() : 'U'}
+            </Avatar>
             <Box sx={{ overflow: 'hidden' }}>
               <Typography variant="subtitle2" fontWeight="medium" noWrap>
-                {user?.name || 'User'}
+                {getDisplayName || 'User'}
               </Typography>
               <Typography variant="caption" color="text.secondary" noWrap>
                 {user?.email || ''}

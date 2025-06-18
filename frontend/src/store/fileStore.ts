@@ -33,9 +33,16 @@ export interface FileStoreActions {
   clearSelection: () => void;
   getSelectedFiles: () => FileItem[];
   clearRehydrationError: () => void;
+  
+  // User management methods
+  switchUser: (userId: string | null) => void;
+  getCurrentUserId: () => string | null;
 }
 
 export type FileStore = FileStoreState & FileStoreActions;
+
+// Store the current user ID to detect user changes
+let currentFileUserId: string | null = null;
 
 const useFileStore = create<FileStore>()(
   persist(
@@ -86,9 +93,34 @@ const useFileStore = create<FileStore>()(
       },
 
       clearRehydrationError: () => set({ _rehydrationError: null }),
+      
+      // User management methods
+      switchUser: (userId: string | null) => {
+        console.log('[FileStore] Switching user from', currentFileUserId, 'to', userId);
+        if (currentFileUserId !== userId) {
+          currentFileUserId = userId;
+          // Clear current state when switching users
+          set({
+            files: [],
+            selectedFileIds: [],
+            _hasHydrated: false,
+            _rehydrationError: null,
+          });
+          // Trigger rehydration for new user - set hydration after brief delay to allow storage name change
+          if (userId) {
+            console.log('[FileStore] User switched, will load data for user:', userId);
+            setTimeout(() => {
+              console.log('[FileStore] Setting hydrated flag after user switch');
+              set({ _hasHydrated: true, _rehydrationError: null });
+            }, 50);
+          }
+        }
+      },
+      
+      getCurrentUserId: () => currentFileUserId,
     }),
     {
-      name: 'denker-file-storage',
+      name: () => currentFileUserId ? `denker-file-storage-${currentFileUserId}` : 'denker-file-storage-temp',
       storage: createJSONStorage(() => localStorage),
       partialize: (state: FileStore) => ({
         files: state.files,
@@ -111,7 +143,16 @@ const useFileStore = create<FileStore>()(
           }
           
           if (!state) {
-            console.log('[FileStore] No state found in storage, will initialize with empty state');
+            console.log('[FileStore] No state found in storage, setting hydrated flag for new user');
+            // For new users with no stored data, we still need to set hydrated flag
+            // Use setTimeout to ensure this runs after the store is fully initialized
+            setTimeout(() => {
+              const currentState = useFileStore.getState();
+              if (!currentState._hasHydrated) {
+                useFileStore.setState({ _hasHydrated: true, _rehydrationError: null });
+                console.log('[FileStore] Hydration flag set for new user');
+              }
+            }, 10);
             return;
           }
           

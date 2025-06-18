@@ -295,6 +295,31 @@ app.whenReady().then(() => {
   });
   console.log("📂 IPC handler 'dialog:openDirectory' registered.");
 
+  // IPC handler for opening file dialog (for file uploads)
+  ipcMain.handle('dialog:openFile', async () => {
+    if (!mainWindow) {
+      console.error('Cannot show open file dialog: mainWindow is not available.');
+      return null;
+    }
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'All Files', extensions: ['*'] },
+        { name: 'Documents', extensions: ['pdf', 'doc', 'docx', 'txt', 'md'] },
+        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'svg'] },
+        { name: 'Code', extensions: ['js', 'ts', 'tsx', 'jsx', 'py', 'json', 'yaml', 'yml'] }
+      ]
+    });
+    if (canceled || filePaths.length === 0) {
+      console.log('Open file dialog was canceled or no files selected.');
+      return null;
+    } else {
+      console.log('Files selected:', filePaths);
+      return filePaths;
+    }
+  });
+  console.log("📁 IPC handler 'dialog:openFile' registered.");
+
   // IPC handler for restarting the app
   ipcMain.handle('restart-app', () => {
     console.log('[electron.js IPC] Request received to restart the application.');
@@ -520,6 +545,8 @@ app.whenReady().then(() => {
       EMBEDDING_MODEL: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
       VECTOR_NAME: 'fast-paraphrase-multilingual-minilm-l12-v2',
       ANTHROPIC_API_KEY: "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",
+      UNSPLASH_ACCESS_KEY: "Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA",
+      UNSPLASH_SECRET_KEY: "BkRu8j7j3bq3erI8xBAYTrAKR59hPwnR3-oWV6q2Q4I",
       DENKER_DEV_MODE: 'false', // Explicitly set for production
       DENKER_COORDINATOR_TIMEOUT_SECONDS: '120', // Set coordinator timeout to 2 minutes (120 seconds)
       DENKER_MEMORY_DATA_PATH: path.join(require('os').homedir(), 'Library', 'Application Support', 'denker-app', 'memory_data'), // Writable memory data path
@@ -544,6 +571,7 @@ app.whenReady().then(() => {
       `DENKER_DEV_MODE=${backendEnv.DENKER_DEV_MODE}, ` +
       `DENKER_MEMORY_DATA_PATH=${backendEnv.DENKER_MEMORY_DATA_PATH}, ` +
       `DENKER_SKIP_MEMORY_HEALTH_CHECK=${backendEnv.DENKER_SKIP_MEMORY_HEALTH_CHECK}, ` +
+      `UNSPLASH_ACCESS_KEY=${backendEnv.UNSPLASH_ACCESS_KEY ? backendEnv.UNSPLASH_ACCESS_KEY.substring(0,8) + '...' : 'MISSING'}, ` +
       `PATH=${backendEnv.PATH}`
     );
 

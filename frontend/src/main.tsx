@@ -81,14 +81,14 @@ console.log('🔑 Renderer received ENV VARS from preload:', envVars);
 // Render the app wrapped with AuthProvider
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        <HashRouter>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <HashRouter>
+        <AuthProvider>
           <App />
-        </HashRouter>
-      </ThemeProvider>
-    </AuthProvider>
+        </AuthProvider>
+      </HashRouter>
+    </ThemeProvider>
   </React.StrictMode>
 );
 

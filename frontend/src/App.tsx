@@ -60,9 +60,27 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   // Show loading screen while initializing
   if (isLoading || !isInitialized) {
     console.log('[ProtectedRoute] Rendering LoadingScreen - still initializing');
+    
+    // Create user-friendly error messages for authentication issues
+    let displayMessage = loadingMessage;
+    if (initializationError) {
+      if (initializationError.includes('Authentication failed') || 
+          initializationError.includes('Invalid token') ||
+          initializationError.includes('User account not found') ||
+          initializationError.includes('Please log in again')) {
+        displayMessage = 'Oops! Please sign in to continue';
+      } else if (initializationError.includes('Backend') || 
+                 initializationError.includes('startup') ||
+                 initializationError.includes('initialization')) {
+        displayMessage = 'Something went wrong during startup';
+      } else {
+        displayMessage = 'Something went wrong, please try again';
+      }
+    }
+    
     return (
       <LoadingScreen 
-        message={initializationError ? 'Startup issue detected...' : loadingMessage}
+        message={displayMessage}
         showDetailedSteps={!initializationError && isFirstTimeUser} // Show detailed tips only for first-time users
         progress={loadingProgress}
         duration={isFirstTimeUser ? 10000 : 3000} // 10 seconds for first-time users, 3 seconds for returning users
@@ -89,6 +107,22 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   // If initialization failed with non-auth error, show error page
   if (initializationError) {
     console.log('[ProtectedRoute] Non-authentication initialization error:', initializationError);
+    
+    // Create user-friendly error display
+    let errorTitle = 'Something went wrong';
+    let errorDescription = 'Please try refreshing the page or restarting the application.';
+    
+    if (initializationError.includes('Network') || initializationError.includes('connection')) {
+      errorTitle = 'Connection Issue';
+      errorDescription = 'Please check your internet connection and try again.';
+    } else if (initializationError.includes('Backend') || initializationError.includes('server')) {
+      errorTitle = 'Service Unavailable';
+      errorDescription = 'Our servers are experiencing issues. Please try again in a moment.';
+    } else if (initializationError.includes('timeout')) {
+      errorTitle = 'Taking Longer Than Expected';
+      errorDescription = 'The app is taking longer to load. Please try refreshing.';
+    }
+    
     return (
       <div style={{ 
         display: 'flex', 
@@ -99,13 +133,15 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
         padding: '20px',
         textAlign: 'center'
       }}>
-        <h2>Startup Issue</h2>
-        <p>{initializationError}</p>
-        <p>Try refreshing the page or restarting the application.</p>
+        <h2>{errorTitle}</h2>
+        <p style={{ marginBottom: '10px', maxWidth: '400px' }}>{errorDescription}</p>
+        <p style={{ fontSize: '0.9em', color: '#666', marginBottom: '20px' }}>
+          Error details: {initializationError}
+        </p>
         <button 
           onClick={() => window.location.reload()}
           style={{ 
-            marginTop: '20px',
+            marginTop: '10px',
             padding: '10px 20px',
             backgroundColor: '#1976d2',
             color: 'white',
@@ -114,7 +150,7 @@ const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
             cursor: 'pointer'
           }}
         >
-          Refresh Page
+          Try Again
         </button>
       </div>
     );

@@ -23,6 +23,9 @@ try:
 except ImportError:
     SHARED_WORKSPACE_AVAILABLE = False
 
+# Global storage for image paths to be served
+_GLOBAL_IMAGE_PATHS = {}
+
 def preview_markdown(file_path: str, format: str = "html") -> Dict[str, Any]:
     """
     Generate a preview of a Markdown document.
@@ -89,16 +92,25 @@ def preview_markdown(file_path: str, format: str = "html") -> Dict[str, Any]:
                 # Find the first existing path
                 for path in possible_paths:
                     if os.path.exists(path) and os.path.isfile(path):
-                        # Convert to file:// URL for absolute reference
-                        file_url = f"file://{os.path.abspath(path)}"
-                        return f"![{alt_text}]({file_url})"
+                        # Store the image path for HTTP serving and return relative URL
+                        image_filename = os.path.basename(path)
+                        # Store in global storage for serving
+                        global _GLOBAL_IMAGE_PATHS
+                        _GLOBAL_IMAGE_PATHS[image_filename] = path
+                        
+                        # Return HTTP server relative URL
+                        return f"![{alt_text}](/images/{image_filename})"
                 
                 # If not found, return original (will result in broken image)
                 logger.warning(f"Image not found for preview: {relative_path} (searched: {possible_paths})")
                 return match.group(0)
             
-            # Replace image references with absolute file:// URLs
+            # Replace image references with HTTP server URLs that will be served locally
             md_content = re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', convert_image_path, md_content)
+            
+            # Store image paths for serving (use global storage)
+            global _GLOBAL_IMAGE_PATHS
+            image_paths = _GLOBAL_IMAGE_PATHS.copy()
             
             # Import markdown with appropriate extensions
             try:
@@ -133,93 +145,93 @@ def preview_markdown(file_path: str, format: str = "html") -> Dict[str, Any]:
                         "error": "Markdown conversion packages not available. Install 'markdown' or 'commonmark' package."
                     }
             
-            # Create a complete HTML document with styling
-            styled_html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Markdown Preview</title>
-                <style>
-                    body {{
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-                        line-height: 1.6;
-                        padding: 20px;
-                        max-width: 800px;
-                        margin: 0 auto;
-                        color: #24292e;
-                    }}
-                    pre, code {{
-                        background-color: #f6f8fa;
-                        border-radius: 3px;
-                        padding: 0.2em 0.4em;
-                        font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-                    }}
-                    pre code {{
-                        padding: 0;
-                    }}
-                    pre {{
-                        padding: 16px;
-                        overflow: auto;
-                        line-height: 1.45;
-                    }}
-                    blockquote {{
-                        padding: 0 1em;
-                        color: #6a737d;
-                        border-left: 0.25em solid #dfe2e5;
-                        margin: 0;
-                    }}
-                    table {{
-                        border-collapse: collapse;
-                        width: 100%;
-                        margin-bottom: 16px;
-                    }}
-                    table, th, td {{
-                        border: 1px solid #dfe2e5;
-                    }}
-                    th, td {{
-                        padding: 6px 13px;
-                    }}
-                    img {{
-                        max-width: 100%;
-                    }}
-                    h1, h2, h3, h4, h5, h6 {{
-                        margin-top: 24px;
-                        margin-bottom: 16px;
-                        font-weight: 600;
-                        line-height: 1.25;
-                    }}
-                    h1 {{
-                        padding-bottom: 0.3em;
-                        font-size: 2em;
-                        border-bottom: 1px solid #eaecef;
-                    }}
-                    h2 {{
-                        padding-bottom: 0.3em;
-                        font-size: 1.5em;
-                        border-bottom: 1px solid #eaecef;
-                    }}
-                    a {{
-                        color: #0366d6;
-                        text-decoration: none;
-                    }}
-                    a:hover {{
-                        text-decoration: underline;
-                    }}
-                    ul, ol {{
-                        padding-left: 2em;
-                    }}
-                    li+li {{
-                        margin-top: 0.25em;
-                    }}
-                </style>
-            </head>
-            <body>
-                {html}
-            </body>
-            </html>
-            """
+            # Create a complete HTML document with styling and proper UTF-8 encoding
+            styled_html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown Preview</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            padding: 20px;
+            max-width: 800px;
+            margin: 0 auto;
+            color: #24292e;
+        }}
+        pre, code {{
+            background-color: #f6f8fa;
+            border-radius: 3px;
+            padding: 0.2em 0.4em;
+            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+        }}
+        pre code {{
+            padding: 0;
+        }}
+        pre {{
+            padding: 16px;
+            overflow: auto;
+            line-height: 1.45;
+        }}
+        blockquote {{
+            padding: 0 1em;
+            color: #6a737d;
+            border-left: 0.25em solid #dfe2e5;
+            margin: 0;
+        }}
+        table {{
+            border-collapse: collapse;
+            width: 100%;
+            margin-bottom: 16px;
+        }}
+        table, th, td {{
+            border: 1px solid #dfe2e5;
+        }}
+        th, td {{
+            padding: 6px 13px;
+        }}
+        img {{
+            max-width: 100%;
+        }}
+        h1, h2, h3, h4, h5, h6 {{
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+        }}
+        h1 {{
+            padding-bottom: 0.3em;
+            font-size: 2em;
+            border-bottom: 1px solid #eaecef;
+        }}
+        h2 {{
+            padding-bottom: 0.3em;
+            font-size: 1.5em;
+            border-bottom: 1px solid #eaecef;
+        }}
+        a {{
+            color: #0366d6;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+        ul, ol {{
+            padding-left: 2em;
+        }}
+        li+li {{
+            margin-top: 0.25em;
+        }}
+    </style>
+</head>
+<body>
+    {html}
+</body>
+</html>"""
             
-            # Save to temp file
+            # Save to temp file with UTF-8 encoding
             html_file = tempfile.NamedTemporaryFile(delete=False, suffix='.html')
             html_path = html_file.name
             with open(html_path, 'w', encoding='utf-8') as f:
@@ -229,7 +241,8 @@ def preview_markdown(file_path: str, format: str = "html") -> Dict[str, Any]:
                 "success": True,
                 "format": "html",
                 "preview_path": html_path,
-                "content": styled_html
+                "content": styled_html,
+                "image_paths": image_paths  # Pass image paths for HTTP serving
             }
         
         elif format.lower() == "text":
@@ -265,7 +278,7 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
         """Handle GET requests."""
         if self.path == '/' or self.path == '/index.html':
             self.send_response(200)
-            self.send_header('Content-type', 'text/html')
+            self.send_header('Content-type', 'text/html; charset=utf-8')
             self.end_headers()
             
             # Check if this is an image-only preview
@@ -285,77 +298,77 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
                 }
                 content_type = content_type_map.get(file_ext, 'image/png')
                 
-                html = f"""
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Image Preview - {filename}</title>
-                    <style>
-                        body {{
-                            margin: 0;
-                            padding: 20px;
-                            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-                            background-color: #f5f5f5;
-                            display: flex;
-                            flex-direction: column;
-                            align-items: center;
-                            justify-content: center;
-                            min-height: 100vh;
-                        }}
-                        .image-container {{
-                            background: white;
-                            padding: 20px;
-                            border-radius: 8px;
-                            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                            max-width: 90vw;
-                            max-height: 80vh;
-                            display: flex;
-                            flex-direction: column;
-                            align-items: center;
-                        }}
-                        .image-title {{
-                            margin-bottom: 20px;
-                            font-size: 18px;
-                            font-weight: 600;
-                            color: #333;
-                        }}
-                        img {{
-                            max-width: 100%;
-                            max-height: 70vh;
-                            object-fit: contain;
-                            border-radius: 4px;
-                        }}
-                        .image-info {{
-                            margin-top: 15px;
-                            font-size: 14px;
-                            color: #666;
-                            text-align: center;
-                        }}
-                    </style>
-                </head>
-                <body>
-                    <div class="image-container">
-                        <div class="image-title">{filename}</div>
-                        <img src="/direct-image" alt="{filename}" id="main-image" />
-                        <div class="image-info">
-                            <p>File: {filename}</p>
-                            <p>Type: {content_type}</p>
-                        </div>
-                    </div>
-                    
-                    <script>
-                        // Add error handling for image loading
-                        document.getElementById('main-image').onerror = function() {{
-                            this.style.display = 'none';
-                            const container = document.querySelector('.image-container');
-                            container.innerHTML += '<p style="color: red; margin-top: 20px;">Failed to load image. The file may be corrupted or in an unsupported format.</p>';
-                        }};
-                    </script>
-                </body>
-                </html>
-                """
+                html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Preview - {filename}</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            background-color: #f5f5f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }}
+        .image-container {{
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            max-width: 90vw;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }}
+        .image-title {{
+            margin-bottom: 20px;
+            font-size: 18px;
+            font-weight: 600;
+            color: #333;
+        }}
+        img {{
+            max-width: 100%;
+            max-height: 70vh;
+            object-fit: contain;
+            border-radius: 4px;
+        }}
+        .image-info {{
+            margin-top: 15px;
+            font-size: 14px;
+            color: #666;
+            text-align: center;
+        }}
+    </style>
+</head>
+<body>
+    <div class="image-container">
+        <div class="image-title">{filename}</div>
+        <img src="/direct-image" alt="{filename}" id="main-image" />
+        <div class="image-info">
+            <p>File: {filename}</p>
+            <p>Type: {content_type}</p>
+        </div>
+    </div>
+    
+    <script>
+        // Add error handling for image loading
+        document.getElementById('main-image').onerror = function() {{
+            this.style.display = 'none';
+            const container = document.querySelector('.image-container');
+            container.innerHTML += '<p style="color: red; margin-top: 20px;">Failed to load image. The file may be corrupted or in an unsupported format.</p>';
+        }};
+    </script>
+</body>
+</html>"""
                 
-                self.wfile.write(html.encode())
+                self.wfile.write(html.encode('utf-8'))
                 return
             
             # Original markdown editor code continues here...
@@ -363,240 +376,266 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
             with open(self.server.markdown_file, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Markdown Live Editor - {os.path.basename(self.server.markdown_file)}</title>
-                <style>
-                    body {{ 
-                        margin: 0; 
-                        padding: 0; 
-                        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-                        overflow: hidden;
-                    }}
-                    .container {{ 
-                        display: flex; 
-                        height: calc(100vh - 40px); 
-                    }}
-                    .editor, .preview {{ 
-                        flex: 1; 
-                        overflow: auto; 
-                        box-sizing: border-box;
-                    }}
-                    .editor {{ 
-                        border-right: 1px solid #ccc;
-                        padding: 0;
-                    }}
-                    .preview {{
-                        padding: 20px;
-                        line-height: 1.6;
-                        color: #24292e;
-                    }}
-                    #editor {{ 
-                        width: 100%; 
-                        height: 100%; 
-                        border: none; 
-                        resize: none; 
-                        font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-                        font-size: 14px;
-                        line-height: 1.6;
-                        padding: 10px;
-                        box-sizing: border-box;
-                    }}
-                    #editor:focus {{ 
-                        outline: none; 
-                    }}
-                    pre, code {{
-                        background-color: #f6f8fa;
-                        border-radius: 3px;
-                        font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-                    }}
-                    pre {{ 
-                        padding: 16px; 
-                        overflow: auto; 
-                    }}
-                    code {{ 
-                        padding: 0.2em 0.4em; 
-                    }}
-                    blockquote {{
-                        padding: 0 1em;
-                        color: #6a737d;
-                        border-left: 0.25em solid #dfe2e5;
-                        margin: 0;
-                    }}
-                    table {{ 
-                        border-collapse: collapse; 
-                        width: 100%; 
-                        margin-bottom: 16px;
-                    }}
-                    table, th, td {{ 
-                        border: 1px solid #dfe2e5; 
-                    }}
-                    th, td {{ 
-                        padding: 6px 13px; 
-                    }}
-                    img {{ 
-                        max-width: 100%; 
-                    }}
-                    .toolbar {{
-                        background: #f1f1f1;
-                        padding: 8px;
-                        display: flex;
-                        justify-content: space-between;
-                        align-items: center;
-                        height: 40px;
-                        box-sizing: border-box;
-                    }}
-                    .btn {{
-                        padding: 6px 12px;
-                        background: #0366d6;
-                        color: white;
-                        border: none;
-                        border-radius: 3px;
-                        cursor: pointer;
-                    }}
-                    .btn:hover {{
-                        background: #0246a2;
-                    }}
-                    h1, h2, h3, h4, h5, h6 {{
-                        margin-top: 24px;
-                        margin-bottom: 16px;
-                        font-weight: 600;
-                        line-height: 1.25;
-                    }}
-                    h1 {{
-                        padding-bottom: 0.3em;
-                        font-size: 2em;
-                        border-bottom: 1px solid #eaecef;
-                    }}
-                    h2 {{
-                        padding-bottom: 0.3em;
-                        font-size: 1.5em;
-                        border-bottom: 1px solid #eaecef;
-                    }}
-                    a {{
-                        color: #0366d6;
-                        text-decoration: none;
-                    }}
-                    a:hover {{
-                        text-decoration: underline;
-                    }}
-                    ul, ol {{
-                        padding-left: 2em;
-                    }}
-                    li+li {{
-                        margin-top: 0.25em;
-                    }}
-                    .status {{
-                        color: #666;
-                        margin-right: 10px;
-                    }}
-                </style>
-                <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-            </head>
-            <body>
-                <div class="toolbar">
-                    <div>
-                        <b>Editing:</b> {os.path.basename(self.server.markdown_file)}
-                    </div>
-                    <div>
-                        <span class="status" id="status"></span>
-                        <button class="btn" onclick="saveChanges()">Save Changes</button>
-                    </div>
-                </div>
-                <div class="container">
-                    <div class="editor">
-                        <textarea id="editor" oninput="updatePreview()">{content}</textarea>
-                    </div>
-                    <div class="preview" id="preview"></div>
-                </div>
+            html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown Live Editor - {os.path.basename(self.server.markdown_file)}</title>
+    <style>
+        body {{ 
+            margin: 0; 
+            padding: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }}
+        .container {{ 
+            display: flex; 
+            height: calc(100vh - 40px); 
+        }}
+        .editor, .preview {{ 
+            flex: 1; 
+            overflow: auto; 
+            box-sizing: border-box;
+        }}
+        .editor {{ 
+            border-right: 1px solid #ccc;
+            padding: 0;
+        }}
+        .preview {{
+            padding: 20px;
+            line-height: 1.6;
+            color: #24292e;
+        }}
+        #editor {{ 
+            width: 100%; 
+            height: 100%; 
+            border: none; 
+            resize: none; 
+            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+            font-size: 14px;
+            line-height: 1.6;
+            padding: 10px;
+            box-sizing: border-box;
+        }}
+        #editor:focus {{ 
+            outline: none; 
+        }}
+        pre, code {{
+            background-color: #f6f8fa;
+            border-radius: 3px;
+            font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+        }}
+        pre {{ 
+            padding: 16px; 
+            overflow: auto; 
+        }}
+        code {{ 
+            padding: 0.2em 0.4em; 
+        }}
+        blockquote {{
+            padding: 0 1em;
+            color: #6a737d;
+            border-left: 0.25em solid #dfe2e5;
+            margin: 0;
+        }}
+        table {{ 
+            border-collapse: collapse; 
+            width: 100%; 
+            margin-bottom: 16px;
+        }}
+        table, th, td {{ 
+            border: 1px solid #dfe2e5; 
+        }}
+        th, td {{ 
+            padding: 6px 13px; 
+        }}
+        img {{ 
+            max-width: 100%; 
+        }}
+        .toolbar {{
+            background: #f1f1f1;
+            padding: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 40px;
+            box-sizing: border-box;
+        }}
+        .btn {{
+            padding: 6px 12px;
+            background: #0366d6;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }}
+        .btn:hover {{
+            background: #0246a2;
+        }}
+        h1, h2, h3, h4, h5, h6 {{
+            margin-top: 24px;
+            margin-bottom: 16px;
+            font-weight: 600;
+            line-height: 1.25;
+        }}
+        h1 {{
+            padding-bottom: 0.3em;
+            font-size: 2em;
+            border-bottom: 1px solid #eaecef;
+        }}
+        h2 {{
+            padding-bottom: 0.3em;
+            font-size: 1.5em;
+            border-bottom: 1px solid #eaecef;
+        }}
+        a {{
+            color: #0366d6;
+            text-decoration: none;
+        }}
+        a:hover {{
+            text-decoration: underline;
+        }}
+        ul, ol {{
+            padding-left: 2em;
+        }}
+        li+li {{
+            margin-top: 0.25em;
+        }}
+        .status {{
+            color: #666;
+            margin-right: 10px;
+        }}
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="toolbar">
+        <div>
+            <b>Editing:</b> {os.path.basename(self.server.markdown_file)}
+        </div>
+        <div>
+            <span class="status" id="status"></span>
+            <button class="btn" onclick="saveChanges()">Save Changes</button>
+        </div>
+    </div>
+    <div class="container">
+        <div class="editor">
+            <textarea id="editor" oninput="updatePreview()">{content}</textarea>
+        </div>
+        <div class="preview" id="preview"></div>
+    </div>
+    
+    <script>
+        // Initialize marked options
+        marked.setOptions({{
+            highlight: function(code, lang) {{
+                return code;
+            }},
+            breaks: true,
+            gfm: true,
+            tables: true
+        }});
+        
+        // Initialize preview
+        function updatePreview() {{
+            const text = document.getElementById('editor').value;
+            const preview = document.getElementById('preview');
+            
+            // Parse markdown with marked
+            let html = marked.parse(text);
+            
+            // Rewrite image src attributes to use our image serving endpoint
+            html = html.replace(/<img([^>]*?)src=["']([^"']+)["']([^>]*?)>/gi, function(match, before, src, after) {{
+                // Skip if already absolute URL (http/https/file) or data URL
+                if (src.match(/^(https?|file):\\/\\//) || src.startsWith('data:')) {{
+                    return match; // Return unchanged
+                }}
                 
-                <script>
-                    // Initialize marked options
-                    marked.setOptions({{
-                        highlight: function(code, lang) {{
-                            return code;
-                        }},
-                        breaks: true,
-                        gfm: true,
-                        tables: true
-                    }});
-                    
-                    // Initialize preview
-                    function updatePreview() {{
-                        const text = document.getElementById('editor').value;
-                        const preview = document.getElementById('preview');
-                        
-                        // Parse markdown with marked
-                        let html = marked.parse(text);
-                        
-                        // Rewrite image src attributes to use our image serving endpoint
-                        html = html.replace(/<img([^>]*?)src=["']([^"']+)["']([^>]*?)>/gi, function(match, before, src, after) {{
-                            // Skip if already absolute URL (http/https/file) or data URL
-                            if (src.match(/^(https?|file):\\/\\//) || src.startsWith('data:')) {{
-                                return match; // Return unchanged
-                            }}
-                            
-                            // Convert relative path to use our image serving endpoint
-                            const imgPath = src.startsWith('./') ? src.slice(2) : src;
-                            const newSrc = '/img/' + encodeURIComponent(imgPath);
-                            return '<img' + before + 'src="' + newSrc + '"' + after + '>';
-                        }});
-                        
-                        preview.innerHTML = html;
-                    }}
-                    
-                    // Save changes
-                    function saveChanges() {{
-                        const text = document.getElementById('editor').value;
-                        const statusEl = document.getElementById('status');
-                        statusEl.textContent = 'Saving...';
-                        
-                        fetch('/save', {{
-                            method: 'POST',
-                            headers: {{
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                            }},
-                            body: 'content=' + encodeURIComponent(text)
-                        }})
-                        .then(response => response.json())
-                        .then(data => {{
-                            if (data.success) {{
-                                statusEl.textContent = 'Saved successfully!';
-                                setTimeout(() => {{ statusEl.textContent = ''; }}, 3000);
-                            }} else {{
-                                statusEl.textContent = 'Error: ' + data.error;
-                            }}
-                        }})
-                        .catch(error => {{
-                            statusEl.textContent = 'Error: ' + error;
-                        }});
-                    }}
-                    
-                    // Initialize
-                    updatePreview();
-                    
-                    // Keyboard shortcuts
-                    document.getElementById('editor').addEventListener('keydown', function(e) {{
-                        // Ctrl+S / Cmd+S to save
-                        if ((e.ctrlKey || e.metaKey) && e.key === 's') {{
-                            e.preventDefault();
-                            saveChanges();
-                        }}
-                    }});
-                </script>
-            </body>
-            </html>
-            """
+                // Convert relative path to use our image serving endpoint
+                const imgPath = src.startsWith('./') ? src.slice(2) : src;
+                const newSrc = '/img/' + encodeURIComponent(imgPath);
+                return '<img' + before + 'src="' + newSrc + '"' + after + '>';
+            }});
             
-            self.wfile.write(html.encode())
+            preview.innerHTML = html;
+        }}
+        
+        // Save changes
+        function saveChanges() {{
+            const text = document.getElementById('editor').value;
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = 'Saving...';
             
-        elif self.path.startswith('/img/'):
+            fetch('/save', {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+                }},
+                body: 'content=' + encodeURIComponent(text)
+            }})
+            .then(response => response.json())
+            .then(data => {{
+                if (data.success) {{
+                    statusEl.textContent = 'Saved successfully!';
+                    setTimeout(() => {{ statusEl.textContent = ''; }}, 3000);
+                }} else {{
+                    statusEl.textContent = 'Error: ' + data.error;
+                }}
+            }})
+            .catch(error => {{
+                statusEl.textContent = 'Error: ' + error;
+            }});
+        }}
+        
+        // Initialize
+        updatePreview();
+        
+        // Keyboard shortcuts
+        document.getElementById('editor').addEventListener('keydown', function(e) {{
+            // Ctrl+S / Cmd+S to save
+            if ((e.ctrlKey || e.metaKey) && e.key === 's') {{
+                e.preventDefault();
+                saveChanges();
+            }}
+        }});
+    </script>
+</body>
+</html>"""
+            
+            self.wfile.write(html.encode('utf-8'))
+            
+        elif self.path.startswith('/img/') or self.path.startswith('/images/'):
             # Handle image requests - allows loading local images in the preview
             try:
                 # Decode the URL-encoded path
-                img_path = urllib.parse.unquote(self.path[5:])
+                if self.path.startswith('/images/'):
+                    img_path = urllib.parse.unquote(self.path[8:])  # Remove '/images/'
+                else:
+                    img_path = urllib.parse.unquote(self.path[5:])   # Remove '/img/'
+                
+                # First try global image paths (for charts and converted images)
+                global _GLOBAL_IMAGE_PATHS
+                if img_path in _GLOBAL_IMAGE_PATHS:
+                    full_img_path = _GLOBAL_IMAGE_PATHS[img_path]
+                    if os.path.exists(full_img_path) and os.path.isfile(full_img_path):
+                        # Determine content type based on extension
+                        content_type = "image/jpeg"  # Default
+                        if img_path.lower().endswith('.png'):
+                            content_type = "image/png"
+                        elif img_path.lower().endswith('.gif'):
+                            content_type = "image/gif"
+                        elif img_path.lower().endswith('.svg'):
+                            content_type = "image/svg+xml"
+                            
+                        # Send the image
+                        self.send_response(200)
+                        self.send_header('Content-type', content_type)
+                        self.end_headers()
+                        
+                        with open(full_img_path, 'rb') as f:
+                            self.wfile.write(f.read())
+                        return
                 
                 # Try multiple locations for the image
                 possible_paths = []
@@ -754,32 +793,32 @@ class LivePreviewHandler(BaseHTTPRequestHandler):
                         f.write(content)
                         
                     self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
                     self.end_headers()
                     
                     self.wfile.write(json.dumps({
                         'success': True,
                         'message': 'Changes saved successfully'
-                    }).encode())
+                    }, ensure_ascii=False).encode('utf-8'))
                     
                 except Exception as e:
                     self.send_response(500)
-                    self.send_header('Content-type', 'application/json')
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
                     self.end_headers()
                     
                     self.wfile.write(json.dumps({
                         'success': False,
                         'error': str(e)
-                    }).encode())
+                    }, ensure_ascii=False).encode('utf-8'))
             else:
                 self.send_response(400)
-                self.send_header('Content-type', 'application/json')
+                self.send_header('Content-type', 'application/json; charset=utf-8')
                 self.end_headers()
                 
                 self.wfile.write(json.dumps({
                     'success': False,
                     'error': 'No content provided'
-                }).encode())
+                }, ensure_ascii=False).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()

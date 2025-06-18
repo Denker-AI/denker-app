@@ -486,8 +486,8 @@ class ChartGenerator:
                                    filename: Optional[str] = None,
                                    width: int = 500,
                                    height: int = 300,
-                                   color_theme: str = 'modern',
-                                   style_theme: str = 'modern') -> Dict[str, Any]:
+                                   color_theme: str = 'professional',
+                                   style_theme: str = 'elegant') -> Dict[str, Any]:
         """
         Create a chart from structured data with beautiful styling.
         
@@ -1010,8 +1010,8 @@ async def create_chart_from_data_tool(chart_type: str,
                                     filename: Optional[str] = None,
                                     width: int = 500,
                                     height: int = 300,
-                                    color_theme: str = 'modern',
-                                    style_theme: str = 'modern') -> Dict[str, Any]:
+                                    color_theme: str = 'professional',
+                                    style_theme: str = 'elegant') -> Dict[str, Any]:
     """
     MCP tool function for creating charts from data with beautiful styling.
     

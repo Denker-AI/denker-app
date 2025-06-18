@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     # Anthropic settings
     ANTHROPIC_API_KEY: str = Field(default="")
     ANTHROPIC_MODEL: str = Field(default="claude-3-5-haiku-20241022")
+    
+    # Unsplash API settings
+    UNSPLASH_ACCESS_KEY: str = Field(default="")
+    UNSPLASH_SECRET_KEY: str = Field(default="")
 
 
     # Security settings

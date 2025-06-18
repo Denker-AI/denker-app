@@ -1,7 +1,8 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import useConversationStore from '../../store/conversationStore';
 import { useEnhancedApi } from '../api';
+import { useAuth } from '../../auth/AuthContext';
 import { 
   ConversationLoadState, 
   ConversationState, 
@@ -21,6 +22,9 @@ export const useConversationList = () => {
     error: null
   });
 
+  // Get auth context to ensure user is authenticated before loading data
+  const { isAuthenticated, user } = useAuth();
+
   // Get the enhanced API
   const { api, isOnline } = useEnhancedApi();
 
@@ -36,6 +40,20 @@ export const useConversationList = () => {
   
   // Track loading state separately from the main state for smoother transitions
   const [isInitialized, setIsInitialized] = useState(false);
+  
+  // Track user changes to reset initialization state
+  const previousUserRef = useRef<string | undefined>(undefined);
+  
+  // Reset initialization when user changes
+  useEffect(() => {
+    const currentUserId = user?.sub;
+    if (previousUserRef.current !== undefined && previousUserRef.current !== currentUserId) {
+      console.log('[useConversationList] User changed from', previousUserRef.current, 'to', currentUserId, '- resetting initialization');
+      setIsInitialized(false);
+      setState({ loadState: ConversationLoadState.IDLE, error: null });
+    }
+    previousUserRef.current = currentUserId;
+  }, [user?.sub]);
   
   /**
    * Load all conversations from the API
@@ -404,14 +422,20 @@ export const useConversationList = () => {
     }
   }, [api, createConversation, removeConversationFromStore]);
   
-  // Initialize conversations on mount, but only if not already initialized
+  // Initialize conversations on mount, but only if not already initialized AND user is authenticated
   useEffect(() => {
-    console.log('[useConversationList] useEffect triggered. isInitialized:', isInitialized);
-    if (!isInitialized) {
-      console.log('[useConversationList] Calling loadConversations for initial load.');
+    console.log('[useConversationList] useEffect triggered. isInitialized:', isInitialized, 'isAuthenticated:', isAuthenticated, 'user:', user?.sub);
+    
+    // Only load conversations if user is authenticated and we haven't initialized yet
+    if (!isInitialized && isAuthenticated && user?.sub) {
+      console.log('[useConversationList] Calling loadConversations for authenticated user:', user.sub);
       loadConversations();
+    } else if (!isAuthenticated) {
+      console.log('[useConversationList] User not authenticated, skipping conversation load');
+    } else if (!user?.sub) {
+      console.log('[useConversationList] User ID not available, skipping conversation load');
     }
-  }, [isInitialized, loadConversations]);
+  }, [isInitialized, isAuthenticated, user?.sub]); // Only depend on auth state and user ID
   
   // Prepare list items for UI
   const conversationList: ConversationListItem[] = conversations.map(conv => ({

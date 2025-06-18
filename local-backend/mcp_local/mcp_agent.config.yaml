@@ -24,7 +24,10 @@ mcp:
     # Fetch server for HTTP requests
     fetch:
       command: "python"
-      args: ["-m", "mcp_server_fetch"]
+      args: ["-m", "mcp_server_fetch",
+        "--user-agent", "Denker Research Agent",
+        "--ignore-robots-txt"
+      ]
       description: "Fetch web content from URLs and convert to markdown"
     
     # Filesystem server for file access

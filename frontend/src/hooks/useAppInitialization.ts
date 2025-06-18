@@ -46,9 +46,9 @@ export const useAppInitialization = (): AppInitializationState => {
   }, [isAuthenticated, hasBeenAuthenticated]);
 
   // Set minimum loading time based on user type and context
-  // Skip minimum loading time for re-login scenarios
+  // Skip minimum loading time for re-login scenarios  
   const shouldSkipMinLoadingTime = isFromLogout && hasBeenAuthenticated;
-  const minLoadingDuration = shouldSkipMinLoadingTime ? 0 : (isFirstTimeUser ? 10000 : 3000);
+  const minLoadingDuration = shouldSkipMinLoadingTime ? 0 : (isFirstTimeUser ? 10000 : 3000); // Keep original times: 10s for first-time, 3s for returning users
 
   useEffect(() => {
     const checkInitialization = () => {
@@ -72,7 +72,14 @@ export const useAppInitialization = (): AppInitializationState => {
       // Check authentication (30% of progress)
       if (authError) {
         error = authError;
-        message = 'Authentication failed - please try again';
+        // Make auth error messages more user-friendly
+        if (authError.includes('email_not_verified') || authError.includes('verify your email')) {
+          message = 'Please check your email and verify your account';
+        } else if (authError.includes('Network')) {
+          message = 'Network issue - please check your connection';
+        } else {
+          message = 'Authentication issue - please try signing in again';
+        }
         progress = 15; // Some progress even on error
       } else if (isAuthenticated) {
         progress += 30;
@@ -113,8 +120,8 @@ export const useAppInitialization = (): AppInitializationState => {
 
       // Check conversation store (35% of progress)
       // Conversation store doesn't have explicit hydration flag, so we assume it's ready
-      // if we're not in the auth loading phase
-      if (!authLoading) {
+      // if auth is complete (authenticated or has error)
+      if (isAuthenticated || authError || !authLoading) {
         progress += 35;
         
         if (progress >= 95) {
@@ -139,12 +146,14 @@ export const useAppInitialization = (): AppInitializationState => {
       }
 
       // Consider initialization complete when:
-      // 1. Not in auth loading state
+      // 1. Auth state is determined (authenticated, has error, OR auth check is complete)
       // 2. File store is hydrated (or failed gracefully)  
-      // 3. Auth state is determined (authenticated, has error, OR auth check is complete)
-      // 4. Minimum loading time has passed (or can be skipped for re-login)
-      const technicallyReady = !authLoading && fileStore._hasHydrated;
-      const isInitialized = technicallyReady && (minLoadingTimeReached || shouldSkipMinLoadingTime);
+      // 3. Minimum loading time has passed (or can be skipped for re-login)
+      const authComplete: boolean = isAuthenticated || authError !== null || !authLoading;
+      const technicallyReady: boolean = authComplete && fileStore._hasHydrated;
+      const isInitialized: boolean = technicallyReady && (minLoadingTimeReached || shouldSkipMinLoadingTime);
+      
+
 
       setInitializationState({
         isInitialized,

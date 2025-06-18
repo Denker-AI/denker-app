@@ -10,6 +10,7 @@ import {
   IconButton,
   Alert,
 } from '@mui/material';
+import { useNavigate } from 'react-router-dom';
 import CloseIcon from '@mui/icons-material/Close';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import EmailIcon from '@mui/icons-material/Email';
@@ -27,6 +28,7 @@ const isElectron = !!(window as any).electron;
 
 const EmailVerificationPage: React.FC = () => {
   const theme = useTheme();
+  const navigate = useNavigate();
 
   const handleClose = () => {
     console.log('Close button clicked');
@@ -44,7 +46,7 @@ const EmailVerificationPage: React.FC = () => {
 
   const handleTryLogin = () => {
     // Navigate back to login
-    window.location.href = '/login';
+    navigate('/login');
   };
 
   return (
@@ -146,7 +148,7 @@ const EmailVerificationPage: React.FC = () => {
               color="primary"
               size="large"
               fullWidth
-              onClick={() => window.location.href = '/login'}
+              onClick={() => navigate('/login')}
             >
               Back to Login
             </Button>

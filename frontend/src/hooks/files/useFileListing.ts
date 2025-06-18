@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import useFileStore from '../../store/fileStore';
 import { useEnhancedApi } from '../api';
+import { useAuth } from '../../auth/AuthContext';
 import {
   FileLoadState,
   FileState,
@@ -16,6 +17,9 @@ export const useFileListing = () => {
     loadState: FileLoadState.IDLE,
     error: null
   });
+
+  // Get auth context to ensure user is authenticated before loading data
+  const { isAuthenticated, user } = useAuth();
 
   // Get the enhanced API
   const { api } = useEnhancedApi();
@@ -91,16 +95,22 @@ export const useFileListing = () => {
     }
   }, [api, files, setFiles, state.loadState, _hasHydrated]);
 
-  // Load files on mount if not already initialized and store is hydrated
+  // Load files on mount if not already initialized, store is hydrated, AND user is authenticated
   useEffect(() => {
-    console.log('[useFileListing] Mount effect. isInitialized:', isInitialized, '_hasHydrated:', _hasHydrated);
-    if (!isInitialized && _hasHydrated) {
-      console.log('[useFileListing] Mount effect: Calling loadFiles because not initialized and store hydrated.');
+    console.log('[useFileListing] Mount effect. isInitialized:', isInitialized, '_hasHydrated:', _hasHydrated, 'isAuthenticated:', isAuthenticated, 'user:', user?.sub);
+    
+    // Only load files if user is authenticated, store is hydrated, and we haven't initialized yet
+    if (!isInitialized && _hasHydrated && isAuthenticated && user?.sub) {
+      console.log('[useFileListing] Mount effect: Calling loadFiles for authenticated user:', user.sub);
       loadFiles();
+    } else if (!isAuthenticated) {
+      console.log('[useFileListing] User not authenticated, skipping file load');
+    } else if (!user?.sub) {
+      console.log('[useFileListing] User ID not available, skipping file load');
     } else if (!_hasHydrated) {
       console.log('[useFileListing] Mount effect: Waiting for file store hydration.');
     }
-  }, [isInitialized, loadFiles, _hasHydrated]);
+  }, [isInitialized, _hasHydrated, isAuthenticated, user?.sub]); // Depend on auth state and user ID
 
   // /**
   //  * Refresh files periodically

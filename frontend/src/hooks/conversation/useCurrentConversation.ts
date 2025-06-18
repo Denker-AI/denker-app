@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import useConversationStore, { Conversation, Message } from '../../store/conversationStore';
 import useFileStore, { FileItem } from '../../store/fileStore';
 import { useEnhancedApi } from '../api';
+import { useAuth } from '../../auth/AuthContext';
 import {
   ConversationLoadState,
   ConversationState,
@@ -39,6 +40,10 @@ export const useCurrentConversation = () => {
 
   // Track loaded conversations to prevent redundant loading
   const loadedConversations = useRef<Set<string>>(new Set());
+  
+  // Track current user to detect user switches
+  const currentUser = useAuth().user;
+  const previousUserRef = useRef<string | undefined>(undefined);
 
   // Define pagination state (using imported type)
   const [paginationState, setPaginationState] = useState<PaginationState>({
@@ -46,6 +51,17 @@ export const useCurrentConversation = () => {
     hasMoreMessages: true, // Assume true initially
     oldestMessageId: null,
   });
+  
+  // Clear loaded conversations cache when user changes
+  useEffect(() => {
+    const currentUserId = currentUser?.sub;
+    if (previousUserRef.current !== undefined && previousUserRef.current !== currentUserId) {
+      console.log('[useCurrentConversation] User changed from', previousUserRef.current, 'to', currentUserId, '- clearing loaded cache');
+      loadedConversations.current.clear();
+      setState({ loadState: ConversationLoadState.IDLE, error: null });
+    }
+    previousUserRef.current = currentUserId;
+  }, [currentUser?.sub]);
 
   /**
    * Load the initial batch of messages for a specific conversation
@@ -75,6 +91,12 @@ export const useCurrentConversation = () => {
       loadedConversations.current.add(id);
       setState({ loadState: ConversationLoadState.LOADED, error: null });
       return existingConversation;
+    }
+    
+    // If conversation exists but has no messages (e.g., after user switch), force load from API
+    if (existingConversation && existingConversation.id === id && (!existingConversation.messages || existingConversation.messages.length === 0)) {
+      console.log(`[useCurrentConversation] Conversation ${id} exists but has no messages, loading from API`);
+      // Continue to API loading below
     }
 
     // Need to load from API
@@ -272,7 +294,7 @@ export const useCurrentConversation = () => {
       loadConversation(currentConversationId);
     }
 
-  }, [currentConversationId, getCurrentConversation, loadConversation, state.loadState]);
+  }, [currentConversationId, state.loadState]); // Remove function deps to prevent infinite re-renders
 
   /**
    * Update conversation title

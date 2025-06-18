@@ -211,7 +211,7 @@ async def create_themed_table(
     headers: List[str],
     data: List[List[str]],
     title: Optional[str] = None,
-    theme: str = "modern",
+    theme: str = "professional",
     alignment: Optional[List[str]] = None
 ) -> Dict[str, Any]:
     """

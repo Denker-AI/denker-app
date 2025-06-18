@@ -70,7 +70,14 @@ interface ConversationState {
   // Debug/Reset methods
   resetStore: () => void;
   repairConversation: (id: string) => boolean;
+  
+  // User management methods
+  switchUser: (userId: string | null) => void;
+  getCurrentUserId: () => string | null;
 }
+
+// Store the current user ID to detect user changes
+let currentUserId: string | null = null;
 
 const useConversationStore = create<ConversationState>()(
   persist(
@@ -406,6 +413,11 @@ const useConversationStore = create<ConversationState>()(
       // Debug/Reset methods
       resetStore: () => {
         console.log('[Store] Resetting conversation store to initial state');
+        // Remove current user's storage
+        if (currentUserId) {
+          localStorage.removeItem(`denker-conversations-storage-${currentUserId}`);
+        }
+        // Also remove old non-user-specific storage for migration
         localStorage.removeItem('denker-conversations-storage');
         set({
           conversations: [],
@@ -414,6 +426,28 @@ const useConversationStore = create<ConversationState>()(
           error: null,
         });
       },
+      
+      // User management methods
+      switchUser: (userId: string | null) => {
+        console.log('[Store] Switching user from', currentUserId, 'to', userId);
+        if (currentUserId !== userId) {
+          currentUserId = userId;
+          // Clear current state when switching users
+          set({
+            conversations: [],
+            currentConversationId: null,
+            isLoading: false,
+            error: null,
+          });
+          // Trigger rehydration for new user
+          if (userId) {
+            // This will be handled by the persistence middleware automatically
+            console.log('[Store] User switched, will load data for user:', userId);
+          }
+        }
+      },
+      
+      getCurrentUserId: () => currentUserId,
       
       repairConversation: (id: string) => {
         console.log(`[Store] Attempting to repair conversation ${id}`);
@@ -451,7 +485,7 @@ const useConversationStore = create<ConversationState>()(
       },
     }),
     {
-      name: 'denker-conversations-storage', // unique name for localStorage key
+      name: () => currentUserId ? `denker-conversations-storage-${currentUserId}` : 'denker-conversations-storage-temp', // user-specific storage key
       storage: createJSONStorage(() => localStorage), // use localStorage by default
       partialize: (state) => {
         console.log('Persisting conversation state with', state.conversations.length, 'conversations');
