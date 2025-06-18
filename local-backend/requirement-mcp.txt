@@ -30,6 +30,7 @@ pyyaml==6.0.2
 # LLM/Vector/Cloud/DB
 openai==1.78.1
 anthropic==0.50.0
+anthropic[vertex]==0.50.0
 langchain==0.3.25
 langchain-openai==0.3.16
 langchain-community==0.3.24

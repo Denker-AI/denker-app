@@ -16,7 +16,21 @@ import httpx
 
 # Attempt to import LocalUserStore
 # This might need adjustment based on actual file structure and potential circular dependencies
-from core.user_store import LocalUserStore
+try:
+    from core.user_store import LocalUserStore
+except ImportError:
+    # Fallback for when import path is not available
+    import sys
+    import os
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    try:
+        from core.user_store import LocalUserStore
+    except ImportError:
+        # Create a mock LocalUserStore for testing
+        class LocalUserStore:
+            @staticmethod
+            def get_user():
+                return None
 
 logger = logging.getLogger(__name__)
 

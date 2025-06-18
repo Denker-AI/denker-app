@@ -136,12 +136,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Function to check if this is a first-time login
   const checkFirstTimeLogin = useCallback(async (userInfo: UserInfo) => {
-    const hasCompletedOnboarding = localStorage.getItem('denker_onboarding_completed');
+    const hasCompletedOnboarding = localStorage.getItem(`denker_onboarding_completed_${userInfo.sub}`);
     
-    // Show onboarding if user hasn't completed it before
+    // Show onboarding if user hasn't completed it before (use user-specific key)
     if (!hasCompletedOnboarding && userInfo.sub) {
-      console.log('[AuthContext] First-time login detected, showing onboarding');
-      setShowOnboarding(true);
+      console.log('[AuthContext] First-time login detected for user:', userInfo.sub);
+      // Delay onboarding slightly to ensure app is ready
+      setTimeout(() => {
+        console.log('[AuthContext] Showing onboarding for first-time user');
+        setShowOnboarding(true);
+      }, 1000);
     }
   }, []);
 
@@ -236,9 +240,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Function to hide onboarding modal
   const hideOnboarding = useCallback(() => {
     setShowOnboarding(false);
-    // Mark onboarding as completed in localStorage
-    localStorage.setItem('denker_onboarding_completed', 'true');
-  }, []);
+    // Mark onboarding as completed in localStorage with user-specific key
+    if (user?.sub) {
+      localStorage.setItem(`denker_onboarding_completed_${user.sub}`, 'true');
+    }
+  }, [user?.sub]);
 
   // Function to show onboarding modal on demand
   const showOnboardingModal = useCallback(() => {

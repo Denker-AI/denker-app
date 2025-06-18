@@ -165,10 +165,11 @@ try:
 except Exception: # pylint: disable=broad-except
     logger.warning("Could not set mcp_agent logger level at initial setup. Will try again later if needed.")
 
-# Automatic Qdrant dev/prod switching
+# Automatic Qdrant dev/prod switching - Use same cloud Qdrant as production
 if os.environ.get("DENKER_DEV_MODE", "false").lower() == "true":
-    os.environ["QDRANT_URL"] = "http://localhost:6333"
-    os.environ["QDRANT_API_KEY"] = ""
+    # Use same cloud Qdrant as production for consistency
+    os.environ["QDRANT_URL"] = "https://f1f12584-e161-4974-b6fa-eb2e8bc3fdfc.europe-west3-0.gcp.cloud.qdrant.io"
+    os.environ["QDRANT_API_KEY"] = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.u7ZjD6dc0cEIMMX2ZxDHio-xD1IIjwYaTSm3PZ-dLEE"
 
 # Set up logging
 logger = logging.getLogger(__name__)

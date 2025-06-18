@@ -449,7 +449,7 @@ app.whenReady().then(() => {
           AUTH0_API_AUDIENCE: RENDERER_ENV_VARS.VITE_AUTH0_AUDIENCE,
           AUTH0_CLIENT_ID: RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID,
           VERTEX_AI_PROJECT_ID: RENDERER_ENV_VARS.VITE_VERTEX_AI_PROJECT_ID,
-          VERTEX_AI_LOCATION: 'europe-west4',
+          VERTEX_AI_LOCATION: 'europe-west1',
           NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV,
           QDRANT_URL: 'https://f1f12584-e161-4974-b6fa-eb2e8bc3fdfc.europe-west3-0.gcp.cloud.qdrant.io',
           QDRANT_API_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.u7ZjD6dc0cEIMMX2ZxDHio-xD1IIjwYaTSm3PZ-dLEE',
@@ -534,7 +534,7 @@ app.whenReady().then(() => {
       // Let's add VITE_AUTH0_CLIENT_ID as well, as it's often useful for backend services too.
       AUTH0_CLIENT_ID: RENDERER_ENV_VARS.VITE_AUTH0_CLIENT_ID,
       VERTEX_AI_PROJECT_ID: RENDERER_ENV_VARS.VITE_VERTEX_AI_PROJECT_ID,
-      VERTEX_AI_LOCATION: 'europe-west4', // Added
+      VERTEX_AI_LOCATION: 'europe-west1', // Added
       NODE_ENV: RENDERER_ENV_VARS.VITE_NODE_ENV, // Pass NODE_ENV as well
       MPLBACKEND: 'Agg', // Non-interactive backend for unstructured
       MPLCONFIGDIR: path.join(require('os').tmpdir(), 'denker_matplotlib_cache'), // Writable cache directory
@@ -545,6 +545,10 @@ app.whenReady().then(() => {
       EMBEDDING_MODEL: 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2',
       VECTOR_NAME: 'fast-paraphrase-multilingual-minilm-l12-v2',
       ANTHROPIC_API_KEY: "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",
+      // Vertex AI configuration for Anthropic models
+      USE_VERTEX_ANTHROPIC: 'true',
+      VERTEX_PROJECT_ID: 'modular-bucksaw-424010-p6',
+      VERTEX_REGION: 'europe-west1',
       UNSPLASH_ACCESS_KEY: "Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA",
       UNSPLASH_SECRET_KEY: "BkRu8j7j3bq3erI8xBAYTrAKR59hPwnR3-oWV6q2Q4I",
       DENKER_DEV_MODE: 'false', // Explicitly set for production
@@ -563,6 +567,9 @@ app.whenReady().then(() => {
       `AUTH0_CLIENT_ID=${backendEnv.AUTH0_CLIENT_ID ? backendEnv.AUTH0_CLIENT_ID.substring(0,5) + '...' : 'MISSING'}, ` +
       `VERTEX_AI_PROJECT_ID=${backendEnv.VERTEX_AI_PROJECT_ID}, `+
       `VERTEX_AI_LOCATION=${backendEnv.VERTEX_AI_LOCATION}, `+
+      `USE_VERTEX_ANTHROPIC=${backendEnv.USE_VERTEX_ANTHROPIC}, `+
+      `VERTEX_PROJECT_ID=${backendEnv.VERTEX_PROJECT_ID || 'NOT_SET'}, `+
+      `VERTEX_REGION=${backendEnv.VERTEX_REGION}, `+
       `NODE_ENV=${backendEnv.NODE_ENV}, ` +
       `QDRANT_URL=${backendEnv.QDRANT_URL}, ` +
       `QDRANT_COLLECTION_NAME=${backendEnv.QDRANT_COLLECTION_NAME}, ` +

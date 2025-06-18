@@ -78,6 +78,15 @@ from anthropic.types import Message, MessageParam, ToolParam
 from mcp.types import CallToolRequest, CallToolRequestParams
 # --- END ADDED ---
 
+# --- ADDED: Import for Vertex AI support ---
+try:
+    from anthropic import AnthropicVertex
+    VERTEX_AVAILABLE = True
+except ImportError:
+    VERTEX_AVAILABLE = False
+    logger.warning("AnthropicVertex not available. Install with: pip install 'anthropic[vertex]'")
+# --- END ADDED ---
+
 # Type for WebSocket manager
 class WebSocketManagerType:
     async def send_json(self, query_id: str, data: Dict[str, Any]) -> bool: ...
@@ -136,6 +145,15 @@ class DecisionResponseModel(BaseModel):
     needs_clarification: bool = False
     clarifying_questions: Optional[List[str]] = Field(default_factory=list)
 # --- END ADDED --- 
+
+# --- ADDED: Environment variable to easily switch between Anthropic modes ---
+# Set USE_VERTEX_ANTHROPIC=true to use Vertex AI, false or unset to use direct Anthropic API
+USE_VERTEX_ANTHROPIC = os.environ.get("USE_VERTEX_ANTHROPIC", "false").lower() == "true"
+
+# Vertex AI configuration from environment
+VERTEX_PROJECT_ID = os.environ.get("VERTEX_PROJECT_ID", "")
+VERTEX_REGION = os.environ.get("VERTEX_REGION", "europe-west1")
+# --- END ADDED ---
 
 # Set the Anthropic API key directly
 os.environ['ANTHROPIC_API_KEY'] = ANTHROPIC_API_KEY
@@ -2178,6 +2196,142 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         self.cache_system_prompt = True  # Enable system prompt caching by default
         self._cache_workflow_context = False  # Disabled workflow context caching (currently bypassed in code)
         # --- END FIXED ---
+        
+        # --- ADDED: Vertex AI Support ---
+        # Update provider name based on configuration
+        if USE_VERTEX_ANTHROPIC and VERTEX_AVAILABLE:
+            self.provider = "Vertex-Anthropic"
+            self.logger.info(f"[FixedAnthropicAugmentedLLM] Configured to use Vertex AI (project: {VERTEX_PROJECT_ID}, region: {VERTEX_REGION})")
+        else:
+            self.provider = "Direct-Anthropic"
+            self.logger.info(f"[FixedAnthropicAugmentedLLM] Configured to use direct Anthropic API")
+            
+        # Update default models for Vertex AI if needed
+        if USE_VERTEX_ANTHROPIC and VERTEX_AVAILABLE and hasattr(self, 'default_request_params') and self.default_request_params:
+            # Convert standard model names to Vertex AI format
+            current_model = self.default_request_params.model
+            vertex_model = self._convert_to_vertex_model(current_model)
+            if vertex_model != current_model:
+                self.default_request_params.model = vertex_model
+                self.logger.info(f"[FixedAnthropicAugmentedLLM] Converted model {current_model} to Vertex format: {vertex_model}")
+        # --- END ADDED ---
+    
+    def _convert_to_vertex_model(self, model_name: str) -> str:
+        """
+        Convert standard Anthropic model names to Vertex AI format.
+        
+        Args:
+            model_name: Standard model name (e.g., "claude-3-5-haiku-20241022")
+            
+        Returns:
+            str: Vertex AI formatted model name (e.g., "claude-3-5-haiku@20241022")
+        """
+        # Mapping of common model name patterns to Vertex AI format
+        # Based on Google Cloud documentation example using @ format
+        vertex_mappings = {
+            # Claude 3.7 Sonnet (available GA as of March 2025)
+            "claude-3-7-sonnet-20250219": "claude-3-7-sonnet@20250219",
+            "claude-3-7-sonnet-latest": "claude-3-7-sonnet@20250219",
+            
+            # Claude 3.5 Haiku (available GA)
+            "claude-3-5-haiku-20241022": "claude-3-5-haiku@20241022",
+            "claude-3-5-haiku-latest": "claude-3-5-haiku@20241022",
+            
+            # Claude 3.5 Sonnet v2 (available GA)
+            "claude-3-5-sonnet-20241022": "claude-3-5-sonnet-v2@20241022",
+            "claude-3-5-sonnet-v2-20241022": "claude-3-5-sonnet-v2@20241022",
+            "claude-3-5-sonnet-latest": "claude-3-5-sonnet-v2@20241022",
+            
+            # Claude 4 models (if available)
+            "claude-sonnet-4-20250514": "claude-sonnet-4@20250514",
+            "claude-opus-4-20250514": "claude-opus-4@20250514",
+            
+            # Legacy Claude 3 models (fallback to latest versions)
+            "claude-3-sonnet": "claude-3-sonnet@20240229",
+            "claude-3-haiku": "claude-3-haiku@20240307",
+            "claude-3-opus": "claude-3-opus@20240229",
+        }
+        
+        # Check direct mapping first
+        if model_name in vertex_mappings:
+            return vertex_mappings[model_name]
+        
+        # Try to find a base model match by removing date suffixes
+        if "-202" in model_name:
+            import re
+            # Remove date patterns to find base model
+            base_model = re.sub(r'-\d{8}$', '', model_name)
+            # Add common suffixes back
+            for suffix in ["-latest", ""]:
+                candidate = base_model + suffix
+                if candidate in vertex_mappings:
+                    return vertex_mappings[candidate]
+        
+        # Fallback: try common model mappings for partial matches
+        model_lower = model_name.lower()
+        if "sonnet" in model_lower and "3.7" in model_lower:
+            return "claude-3-7-sonnet@20250219"
+        elif "haiku" in model_lower and "3.5" in model_lower:
+            return "claude-3-5-haiku@20241022"
+        elif "sonnet" in model_lower and "3.5" in model_lower:
+            return "claude-3-5-sonnet-v2@20241022"
+        elif "sonnet" in model_lower and "4" in model_lower:
+            return "claude-sonnet-4@20250514"
+        elif "opus" in model_lower and "4" in model_lower:
+            return "claude-opus-4@20250514"
+        
+        # If no conversion found, return the original name and log a warning
+        self.logger.warning(f"[FixedAnthropicAugmentedLLM] No Vertex AI mapping found for model: {model_name}. Using as-is.")
+        return model_name
+    
+    def _get_anthropic_client(self):
+        """
+        Get the appropriate Anthropic client based on configuration.
+        
+        Returns:
+            Anthropic client (either direct API or Vertex AI)
+        """
+        if USE_VERTEX_ANTHROPIC:
+            if not VERTEX_AVAILABLE:
+                raise ValueError(
+                    "USE_VERTEX_ANTHROPIC is set to true but Vertex AI is not available. "
+                    "Please check your Google Cloud authentication and configuration."
+                )
+            return self._get_vertex_anthropic_client()
+        else:
+            return self._get_direct_anthropic_client()
+    
+    def _get_direct_anthropic_client(self):
+        """Get direct Anthropic API client"""
+        # Get API key from config or environment
+        api_key = None
+        if (self.context and self.context.config and 
+            hasattr(self.context.config, 'anthropic') and 
+            self.context.config.anthropic and 
+            hasattr(self.context.config.anthropic, 'api_key')):
+            api_key = self.context.config.anthropic.api_key
+        
+        if api_key:
+            self.logger.debug("[FixedAnthropicAugmentedLLM] Using Anthropic API key from config")
+        else:
+            self.logger.debug("[FixedAnthropicAugmentedLLM] Using Anthropic API key from environment")
+        
+        return Anthropic(api_key=api_key)
+    
+    def _get_vertex_anthropic_client(self):
+        """Get Vertex AI Anthropic client"""
+        if not VERTEX_PROJECT_ID:
+            raise ValueError(
+                "VERTEX_PROJECT_ID environment variable is required when USE_VERTEX_ANTHROPIC=true. "
+                "Please set it to your Google Cloud project ID."
+            )
+        
+        self.logger.debug(f"[FixedAnthropicAugmentedLLM] Creating Vertex AI client for project {VERTEX_PROJECT_ID}, region {VERTEX_REGION}")
+        
+        return AnthropicVertex(
+            project_id=VERTEX_PROJECT_ID,
+            region=VERTEX_REGION
+        )
 
     def _get_context_info(self) -> tuple[Optional[str], Optional[str]]:
         """
@@ -2243,20 +2397,23 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                 self.logger.error(f"[FixedAnthropicAugmentedLLM.generate_structured] {context_info} 529 error during generate_str. Circuit breaker already tripped. Error: {e}")
                 raise Exception(f"Service is currently overloaded. Please try again later. Original error: {str(e)}")
             else:
-                raise
+                    raise
 
         try:
             # Next we pass the text through instructor to extract structured data
             # Using the exact same pattern as the official mcp-agent implementation
             import instructor
-            from anthropic import Anthropic
             
-            client = instructor.from_anthropic(
-                Anthropic(api_key=self.context.config.anthropic.api_key),
-            )
+            # Use the appropriate client based on configuration (Vertex AI or direct Anthropic)
+            anthropic_client = self._get_anthropic_client()
+            client = instructor.from_anthropic(anthropic_client)
 
             params = self.get_request_params(request_params)
             model = await self.select_model(params)
+            
+            # Convert model name for Vertex AI if needed
+            if USE_VERTEX_ANTHROPIC and VERTEX_AVAILABLE:
+                model = self._convert_to_vertex_model(model)
 
             # Extract structured data from natural language
             structured_response = client.chat.completions.create(
@@ -2317,7 +2474,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                         'is_complete': False  # Default to False to allow execution
                     }
                     return response_model(**default_plan_data)
-                # --- END ADDED ---
+    # --- END ADDED ---
                 raise
 
     def _estimate_tokens(self, content: str) -> int:
@@ -2536,8 +2693,8 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                     cache_breakpoints_used += 1
                     conversation_cache_applied = True
                     self.logger.info(f"[FixedAnthropicAugmentedLLM] Added conversation history cache breakpoint at message {conversation_cache_index} (total history: {total_conversation_length} chars)")
-        # --- END ADDED ---
-        
+    # --- END ADDED ---
+
         for i, msg in enumerate(cached_messages):
             # Skip if this message already has conversation caching applied
             if conversation_cache_applied and i == len(cached_messages) - 2:
@@ -2654,8 +2811,8 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         if _overload_circuit_breaker.is_overloaded():
             self.logger.error("[FixedAnthropicAugmentedLLM.generate] Circuit breaker is tripped - service overloaded. Aborting LLM call.")
             raise Exception("Service is currently overloaded (circuit breaker tripped). Please try again later.")
-        # --- END ADDED ---
-        
+    # --- END ADDED ---
+
         # --- ADDED LOGGING ---
         self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Received message type: {type(message)}")
         self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Received message content (first 500 chars): {str(message)[:500]}")
@@ -2672,7 +2829,8 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         else:
             self.logger.info("[FixedAnthropicAugmentedLLM.generate] Anthropic API key not found in MCPAppConfig (self.context.config.anthropic.api_key). Anthropic client will try environment variable.")
 
-        anthropic_client = Anthropic(api_key=anthropic_api_key_from_config)
+        # Use the appropriate client based on configuration (Vertex AI or direct Anthropic)
+        anthropic_client = self._get_anthropic_client()
         
         messages: List[MessageParam] = []
         params = self.get_request_params(request_params)
@@ -2841,7 +2999,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         # --- ADDED: Apply prompt caching to messages ---
         # This was missing and causing the NameError
         cached_messages = self._add_cache_control_to_messages(list(messages))
-        # --- END ADDED ---
+    # --- END ADDED ---
 
         for i in range(params.max_iterations):
             # --- UPDATE cached_messages if messages were modified ---
@@ -2900,13 +3058,11 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
             if params.metadata:
                 arguments = {**arguments, **params.metadata}
 
-            # --- ADDED: Check if we need extended cache TTL header ---
+            # --- REMOVED: Outdated extended cache TTL header ---
             extra_headers = {}
-            if self._use_long_cache_for_workflows and self._has_extended_cache_content(cached_messages, arguments.get("system"), final_tools_for_api):
-                extra_headers["anthropic-beta"] = "extended-cache-ttl-2025-04-11"
-                self.logger.info("[FixedAnthropicAugmentedLLM.generate] Added extended cache TTL beta header")
-            # --- END ADDED ---
-            
+            # Note: extended-cache-ttl is now generally available and doesn't need beta headers
+    # --- END ADDED ---
+
             # Log cache strategy
             cache_count = 0
             extended_cache_count = 0
@@ -2944,7 +3100,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                                 extended_cache_count += 1
             
             self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Cache Strategy Applied - Tools: {tools_cached}, System: {system_cached}, Total Blocks: {cache_count} ({extended_cache_count} with 1h TTL)")
-            # --- END ADDED ---
+    # --- END ADDED ---
 
             self.logger.debug(f"{arguments}")
             # --- ADDED LOGGING ---
@@ -3024,8 +3180,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                 try:
                     executor_result = await self.executor.execute(
                         anthropic_client.messages.create, 
-                        **arguments,
-                        extra_headers=extra_headers if extra_headers else None
+                        **arguments
                     )
                 except Exception as e:
                     # Check if this is an OverloadedError (529 error) from Anthropic
@@ -3064,7 +3219,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                     self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Cache Performance - Created: {cache_creation} tokens, Read: {cache_read} tokens, New Input: {input_tokens} tokens")
                     cache_hit_ratio = cache_read / (cache_read + input_tokens + cache_creation) if (cache_read + input_tokens + cache_creation) > 0 else 0
                     self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Cache hit ratio: {cache_hit_ratio:.2%}")
-            # --- END ADDED ---
+    # --- END ADDED ---
 
             self.logger.debug(f"{model} response:", data=llm_response)
 

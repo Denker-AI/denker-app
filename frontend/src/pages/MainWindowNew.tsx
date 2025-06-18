@@ -909,8 +909,8 @@ const MainWindowNew: React.FC = () => {
   }, [conversation, isMobile, isSideMenuOpen, toggleSideMenu]);
   // --- END ADDED ---
   
-  // Render loading state if not initialized or authenticating
-  if (conversation.isLoading) {
+  // Show less intrusive loading state - only for critical failures
+  if (conversation.isConversationError && conversation.conversationListError) {
     return (
       <Box
         display="flex"
@@ -918,7 +918,9 @@ const MainWindowNew: React.FC = () => {
         alignItems="center"
         minHeight="100vh"
       >
-        <Alert severity="info">Loading...</Alert>
+        <Alert severity="error">
+          Failed to load conversations. Please refresh the page.
+        </Alert>
       </Box>
     );
   }

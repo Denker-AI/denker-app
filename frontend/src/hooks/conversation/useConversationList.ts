@@ -81,6 +81,12 @@ export const useConversationList = () => {
         setCurrentConversationId(currentConversations[0].id);
       }
       
+      // Set as loaded immediately to prevent blocking UI
+      setState({
+        loadState: ConversationLoadState.LOADED,
+        error: null
+      });
+      
       // Background validation with API (don't update store if it causes issues)
       api.getConversationsWithRetry().then(response => {
         console.log('Background sync: Loaded conversations from API:', response.length);
@@ -156,12 +162,18 @@ export const useConversationList = () => {
         if (currentConversations.length > 0) {
           console.log('[useConversationList] No API conversations but found existing local conversations, skipping default creation');
         } else {
-          console.log('[useConversationList] No conversations found, creating default conversation');
-          try {
-            // Create conversation on the server first
-            const createResponse = await api.createConversationWithRetry({
-              title: 'New Conversation'
-            });
+          console.log('[useConversationList] No conversations found, will create default conversation in background');
+          
+          // Set loading state complete first to show UI
+          setState({
+            loadState: ConversationLoadState.LOADED,
+            error: null
+          });
+          
+          // Create conversation in background to avoid blocking UI
+          api.createConversationWithRetry({
+            title: 'New Conversation'
+          }).then(createResponse => {
             
             if (createResponse && createResponse.id) {
               const conversationId = createResponse.id;
@@ -190,17 +202,12 @@ export const useConversationList = () => {
               setCurrentConversationId(conversationId);
               
               // Also add the welcome message to the server
-              try {
-                await api.addMessageWithRetry(conversationId, {
-                  content: 'Hi there! How can I help you today?',
-                  role: 'assistant'
-                });
-              } catch (err) {
-                console.error('[useConversationList] Failed to add welcome message to default conversation:', err);
-                // Continue anyway since the conversation was created
-              }
+              return api.addMessageWithRetry(conversationId, {
+                content: 'Hi there! How can I help you today?',
+                role: 'assistant'
+              });
             }
-          } catch (err) {
+          }).catch(err => {
             console.error('[useConversationList] Failed to create default conversation:', err);
             // If server creation fails, create a local-only conversation to prevent empty state
             const localConversation: Conversation = {
@@ -223,7 +230,7 @@ export const useConversationList = () => {
             console.log('[useConversationList] Created fallback local conversation');
             addConversation(localConversation);
             setCurrentConversationId(localConversation.id);
-          }
+          });
         }
       } else {
         // Auto-select first conversation if no current conversation is set

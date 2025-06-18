@@ -219,27 +219,27 @@ const ProfilePage: React.FC = () => {
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', mb: 4 }}>
           <Box sx={{ position: 'relative', mb: 2 }}>
-            <Avatar
+          <Avatar
               src={getAvatarUrl}
-              sx={{
-                width: 100,
-                height: 100,
-                bgcolor: avatarColor,
-                color: theme.palette.mode === 'dark' 
-                  ? theme.palette.grey[300] 
-                  : theme.palette.grey[700],
-                fontSize: '2rem',
-                fontWeight: 500,
-                border: `2px solid ${theme.palette.divider}`,
-                '&:hover': {
-                  bgcolor: theme.palette.mode === 'dark' 
-                    ? theme.palette.grey[700] 
-                    : theme.palette.grey[400],
-                }
-              }}
-            >
+            sx={{
+              width: 100,
+              height: 100,
+              bgcolor: avatarColor,
+              color: theme.palette.mode === 'dark' 
+                ? theme.palette.grey[300] 
+                : theme.palette.grey[700],
+              fontSize: '2rem',
+              fontWeight: 500,
+              border: `2px solid ${theme.palette.divider}`,
+              '&:hover': {
+                bgcolor: theme.palette.mode === 'dark' 
+                  ? theme.palette.grey[700] 
+                  : theme.palette.grey[400],
+              }
+            }}
+          >
               {!getAvatarUrl && getInitials(getDisplayName)}
-            </Avatar>
+          </Avatar>
             
             {isEditing && (
               <Tooltip title="Edit avatar URL in the form below">
@@ -319,7 +319,7 @@ const ProfilePage: React.FC = () => {
                   size="small"
                   helperText="Custom avatar image URL (leave empty to use Auth0 avatar)"
                   placeholder="https://example.com/avatar.jpg"
-                />
+              />
               )}
               
               <TextField
@@ -337,13 +337,13 @@ const ProfilePage: React.FC = () => {
               
               {isEditing && (
                 <Box sx={{ mt: 3, mb: 2, display: 'flex', gap: 2 }}>
-                  <Button
-                    variant="contained"
-                    color="primary"
-                    onClick={handleSave}
-                  >
-                    Save Changes
-                  </Button>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  onClick={handleSave}
+                >
+                  Save Changes
+                </Button>
                   <Button
                     variant="outlined"
                     onClick={handleCancel}

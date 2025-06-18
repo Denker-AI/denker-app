@@ -721,7 +721,7 @@ class AgentConfiguration:
                 - No explanatory text before or after JSON
                 - Ensure all required fields are present""",
                 "server_names": [],  # Decider doesn't need external services
-                "model": "claude-3-5-haiku-20241022"
+                "model": "claude-3-7-sonnet@20250219"
             },
 
             "researcher": {
@@ -781,7 +781,7 @@ class AgentConfiguration:
 
                 Your role ends when you provide the raw research. Content creation is handled by other agents.""",
                 "server_names": ["fetch", "websearch", "qdrant", "filesystem"],
-                "model": "claude-3-7-sonnet-20250219"
+                "model": "claude-3-7-sonnet@20250219"
             },
             "creator": {
                 "name": "creator",
@@ -896,7 +896,7 @@ class AgentConfiguration:
                 2. **Then use `markdown-editor.convert_from_md`** with destination path to convert directly to user's preferred format and location
                 3. **🚨 CRITICAL: ALWAYS use `filesystem.get_file_info`** 🚨 to provide complete absolute path and file information for user access""",
                 "server_names": ["filesystem", "markdown-editor"],
-                "model": "claude-3-7-sonnet-20250219"
+                "model": "claude-3-7-sonnet@20250219"
             },
             "editor": {
                 "name": "editor",
@@ -1020,7 +1020,7 @@ class AgentConfiguration:
                 2. **Then use `markdown-editor.convert_from_md`** with destination path to convert directly to user's preferred format and location
                 3. **🚨 CRITICAL: ALWAYS use `filesystem.get_file_info`** 🚨 to provide complete absolute path and file information for user access""",
                 "server_names": ["filesystem", "markdown-editor", "fetch", "websearch", "qdrant"],
-                "model": "claude-3-7-sonnet-20250219"
+                "model": "claude-3-7-sonnet@20250219"
             }
         }
         
@@ -1318,14 +1318,14 @@ class AgentConfiguration:
                 # FIXED: Safe configuration of shared base LLM
                 if hasattr(shared_base_llm, 'default_request_params') and shared_base_llm.default_request_params is not None:
                     if hasattr(shared_base_llm.default_request_params, 'model'):
-                        shared_base_llm.default_request_params.model = "claude-3-7-sonnet-20250219"
+                        shared_base_llm.default_request_params.model = "claude-3-7-sonnet@20250219"
                     if hasattr(shared_base_llm.default_request_params, 'maxTokens'):
                         shared_base_llm.default_request_params.maxTokens = 4096
                     if hasattr(shared_base_llm.default_request_params, 'use_cache'):
                         shared_base_llm.default_request_params.use_cache = True
                 else:
                     shared_base_llm.default_request_params = RequestParams(
-                        model="claude-3-7-sonnet-20250219", 
+                        model="claude-3-7-sonnet@20250219", 
                         maxTokens=4096,
                         use_cache=True
                     )
@@ -1404,7 +1404,7 @@ class AgentConfiguration:
             
             # Configure the orchestrator's own default request parameters (e.g., for synthesis)
             # Use high-quality model for synthesis too
-            orchestrator_model = "claude-3-7-sonnet-20250219"  # Use Sonnet for quality synthesis
+            orchestrator_model = "claude-3-7-sonnet@20250219"  # Use Sonnet for quality synthesis
             if not hasattr(orchestrator, 'default_request_params') or orchestrator.default_request_params is None:
                 orchestrator.default_request_params = RequestParams(model=orchestrator_model, maxTokens=8192)  # Restore higher limit for synthesis
             else:

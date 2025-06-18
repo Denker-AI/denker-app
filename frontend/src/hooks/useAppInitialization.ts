@@ -46,9 +46,9 @@ export const useAppInitialization = (): AppInitializationState => {
   }, [isAuthenticated, hasBeenAuthenticated]);
 
   // Set minimum loading time based on user type and context
-  // Skip minimum loading time for re-login scenarios  
+  // Skip minimum loading time for re-login scenarios
   const shouldSkipMinLoadingTime = isFromLogout && hasBeenAuthenticated;
-  const minLoadingDuration = shouldSkipMinLoadingTime ? 0 : (isFirstTimeUser ? 10000 : 3000); // Keep original times: 10s for first-time, 3s for returning users
+  const minLoadingDuration = shouldSkipMinLoadingTime ? 0 : (isFirstTimeUser ? 10000 : 3000); // Keep original times: 10s for first-time, 3s for returning users - backend needs full startup time
 
   useEffect(() => {
     const checkInitialization = () => {
