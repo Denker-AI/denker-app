@@ -771,6 +771,14 @@ class CoordinatorAgent:
         current_logger = logging.getLogger(f"mcp_local.coordinator_agent.query.{query_id}")
         current_logger.info(f"Processing query: {query_id} for user: {user_id} with context: {context}")
         
+        # --- SECURITY: Set user_id in environment for MCP tools to access ---
+        if user_id:
+            os.environ["DENKER_CURRENT_USER_ID"] = user_id
+            current_logger.info(f"[{query_id}] Set DENKER_CURRENT_USER_ID environment variable for user: {user_id}")
+        else:
+            current_logger.warning(f"[{query_id}] No user_id provided - MCP tools won't have user context!")
+        # --- END SECURITY ---
+        
         # --- ADDED: Attempt to get token from LocalUserStore --- 
         auth_token: Optional[str] = None
         stored_user_info = LocalUserStore.get_user()

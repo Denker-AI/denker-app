@@ -26,7 +26,7 @@ dependencies = [
     "fastmcp==2.2.6",
     "mcp==1.6.0",
     "mcp-server-fetch==2025.1.17",
-    "mcp-server-qdrant==0.7.1",
+
     # ... and so on for all packages in requirement-mcp.txt
     # It's important for PyInstaller to know about these for script generation
     "aiohttp==3.11.18",
@@ -70,7 +70,7 @@ dependencies = [
 
 [project.scripts]
 denker-mcp-fetch = "mcp_server_fetch:main"
-denker-mcp-qdrant = "mcp_server_qdrant.main:main"
+denker-mcp-qdrant = "mcp_local.servers.qdrant.main:main"
 denker-mcp-websearch = "mcp_local.servers.websearch.server:main"
 denker-mcp-document-loader = "mcp_local.servers.document_loader.server:main"
 denker-mcp-markdown-editor = "mcp_local.servers.markdown_editor.server:main"

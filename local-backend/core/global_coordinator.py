@@ -362,6 +362,36 @@ async def initialize_coordinator():
                         elif command and 'python' in command.lower():
                             logger.warning(f"[GlobalCoordinator] Server '{server_name}' uses command '{command}' containing 'python'. Consider reviewing if this needs to be updated.")
 
+                # --- SECURITY: Replace user_id placeholder with actual user_id from LocalUserStore ---
+                try:
+                    from core.user_store import LocalUserStore
+                    stored_user_info = LocalUserStore.get_user()
+                    
+                    if stored_user_info and stored_user_info.get("user_id"):
+                        current_user_id = stored_user_info.get("user_id")
+                        logger.info(f"[SECURITY] Found user_id in LocalUserStore: {current_user_id}")
+                        
+                        # Replace user_id placeholder in qdrant server environment variables
+                        mcp_servers = agent_config_dict.get('mcp', {}).get('servers', {})
+                        qdrant_config = mcp_servers.get('qdrant', {})
+                        
+                        if qdrant_config and 'env' in qdrant_config:
+                            qdrant_env = qdrant_config['env']
+                            if 'DENKER_CURRENT_USER_ID' in qdrant_env:
+                                old_value = qdrant_env['DENKER_CURRENT_USER_ID']
+                                qdrant_env['DENKER_CURRENT_USER_ID'] = current_user_id
+                                logger.info(f"[SECURITY] Updated qdrant DENKER_CURRENT_USER_ID: '{old_value}' -> '{current_user_id}'")
+                            else:
+                                # Add user_id if not present in config
+                                qdrant_env['DENKER_CURRENT_USER_ID'] = current_user_id
+                                logger.info(f"[SECURITY] Added qdrant DENKER_CURRENT_USER_ID: '{current_user_id}'")
+                        else:
+                            logger.warning("[SECURITY] Qdrant server configuration not found or missing env section")
+                    else:
+                        logger.warning("[SECURITY] No user_id found in LocalUserStore - qdrant will use placeholder")
+                except Exception as e:
+                    logger.error(f"[SECURITY] Error updating user_id in qdrant config: {e}")
+
                 # Ensure agent_config_dict is fully prepared before this point
 
                 # Create a temporary file to store the modified configuration

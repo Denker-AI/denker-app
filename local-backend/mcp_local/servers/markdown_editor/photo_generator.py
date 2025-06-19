@@ -141,22 +141,11 @@ class PhotoGenerator:
         """Load API key from environment or .env file."""
         import os
         
-        # First try environment variable
-        self.api_key = os.getenv('UNSPLASH_ACCESS_KEY')
-        
-        if not self.api_key:
-            # Try loading from .env file
-            try:
-                from dotenv import load_dotenv
-                load_dotenv()
-                self.api_key = os.getenv('UNSPLASH_ACCESS_KEY')
-            except ImportError:
-                logger.warning("python-dotenv not available, cannot load from .env file")
-            except Exception as e:
-                logger.warning(f"Error loading .env file: {e}")
+        # Hardcoded API key to bypass environment variable issues
+        self.api_key = "Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA"
         
         if self.api_key:
-            logger.info("Unsplash API key loaded successfully")
+            logger.info("Unsplash API key loaded successfully (hardcoded)")
         else:
             logger.warning("No Unsplash API key found. Photo search/download will fail.")
         
@@ -612,9 +601,11 @@ async def search_photos_tool(query: str,
     """
     generator = PhotoGenerator()
     
-    # Override API key if provided
+    # Override API key if provided, or use hardcoded fallback
     if api_key:
         generator.set_api_key(api_key)
+    elif not generator.api_key:
+        generator.set_api_key("Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA")
     
     return await generator.search_photos(
         query=query,
@@ -648,9 +639,11 @@ async def download_photo_tool(photo_id: str,
     """
     generator = PhotoGenerator()
     
-    # Override API key if provided
+    # Override API key if provided, or use hardcoded fallback
     if api_key:
         generator.set_api_key(api_key)
+    elif not generator.api_key:
+        generator.set_api_key("Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA")
     
     return await generator.download_photo(
         photo_id=photo_id,
@@ -682,9 +675,11 @@ async def get_random_photo_tool(query: Optional[str] = None,
     """
     generator = PhotoGenerator()
     
-    # Override API key if provided
+    # Override API key if provided, or use hardcoded fallback
     if api_key:
         generator.set_api_key(api_key)
+    elif not generator.api_key:
+        generator.set_api_key("Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA")
     
     return await generator.get_random_photo(
         query=query,
@@ -731,8 +726,11 @@ async def search_and_download_photo_tool(query: str,
         Download result with file path and metadata, similar to chart generator
     """
     generator = PhotoGenerator()
+    # Use provided API key or hardcoded fallback
     if api_key:
         generator.set_api_key(api_key)
+    elif not generator.api_key:
+        generator.set_api_key("Rsz5zQR6q4ogic0dVVAgBlS32xzTYJP-O5Tdb4n_RJA")
     
     try:
         # First search for photos

@@ -42,8 +42,8 @@ mcp:
     
     # Qdrant server for vector search
     qdrant:
-      command: "mcp-server-qdrant"
-      args: []
+      command: "python"
+      args: ["-m", "mcp_local.servers.qdrant.main"]
       env:
         {
           "QDRANT_URL": "http://qdrant:6333",
@@ -52,8 +52,9 @@ mcp:
           "EMBEDDING_MODEL_TYPE": "fastembed",  # Explicitly set the model type
           "VECTOR_NAME": "fast-paraphrase-multilingual-minilm-l12-v2",  # Update vector name to match the model
           "AUTO_CREATE_COLLECTION": "true",  # Ensure collection is created if it doesn't exist
-          "TOOL_STORE_DESCRIPTION": "Store documents with metadata for later retrieval. The 'information' parameter should contain the document content, while metadata should include file details like 'file_id', 'user_id', 'filename', etc. Use this for saving processed user files.",
-          "TOOL_FIND_DESCRIPTION": "Find relevant documents based on semantic search. The query parameter should describe what you're looking for. Returns the most relevant documents with their metadata. Use this to retrieve information from user-uploaded files and system knowledge."
+          "DENKER_CURRENT_USER_ID": "{{USER_ID_PLACEHOLDER}}",  # Will be replaced with actual user_id at authentication
+          "TOOL_STORE_DESCRIPTION": "Store documents with metadata for later retrieval. The 'information' parameter should contain the document content, while metadata should include file details like 'file_id', 'filename', etc. The user_id parameter is optional - if not provided, it will be automatically detected from the current session context for security filtering. Use this for saving processed user files.",
+          "TOOL_FIND_DESCRIPTION": "Find relevant documents based on semantic search. The query parameter should describe what you're looking for. The user_id parameter is optional - if not provided, it will be automatically detected from the current session context for security filtering to only search within the current user's documents. If you need to search specifically within a document for which you have a 'file_id', include a 'file_id_filter' parameter with the file_id value in your tool input. Returns the most relevant documents with their metadata. Use this to retrieve information from user-uploaded files and system knowledge."
         }
       description: "Search vector database of embeddings semantically"
     

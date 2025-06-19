@@ -825,8 +825,8 @@ class AgentConfiguration:
                 **🚨 CRITICAL PNG/IMAGE FILE HANDLING:** 🚨
                 ✅ **NEVER re-write PNG files** - PNG files can become corrupted if written again
                 ✅ **For image files (PNG, JPG, etc.)**: If the file is already in the correct format, ONLY use `filesystem_move_file` to move from workspace to user's desired folder
-                ✅ **Do NOT use text editing tools** on binary image files (PNG, JPG, GIF, etc.)
-                ✅ **Chart creation workflow**: Create chart → Use live preview to verify → Move file (don't rewrite)
+                ✅ **Do NOT use read and write text editing tools** on binary image files (PNG, JPG, GIF, etc.)
+                ✅ **Chart creation workflow**: Create chart → Use live preview to verify → filesystem_get_file_info to get file path → filesystem_move_file to move file (don't rewrite)
 
                 **What You DO NOT Do:**
                 ❌ Conduct research (use provided research data)
@@ -945,8 +945,8 @@ class AgentConfiguration:
                 **🚨 CRITICAL PNG/IMAGE FILE HANDLING:** 🚨
                 ✅ **NEVER re-write PNG files** - PNG files can become corrupted if written again
                 ✅ **For image files (PNG, JPG, etc.)**: If the file is already in the correct format, ONLY use `filesystem_move_file` to move from workspace to user's desired folder
-                ✅ **Do NOT use text editing tools** on binary image files (PNG, JPG, GIF, etc.)
-                ✅ **Chart creation workflow**: Create chart → Use live preview to verify → Move file (don't rewrite)
+                ✅ **Do NOT use read and write text editing tools** on binary image files (PNG, JPG, GIF, etc.)
+                ✅ **Chart creation workflow**: Create chart → Use live preview to verify → filesystem_get_file_info to get file path → filesystem_move_file to move file (don't rewrite)
 
                 **What You DO NOT Do:**
                 ❌ Conduct research or fact-checking (trust provided content)

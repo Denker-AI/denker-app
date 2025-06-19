@@ -29,7 +29,7 @@ def handle_mcp_server_execution():
         # Map module names to their main functions
         mcp_server_modules = {
             "mcp_server_fetch": "mcp_server_fetch:main",
-            "mcp_server_qdrant.main": "mcp_server_qdrant.main:main", 
+            "mcp_local.servers.qdrant.main": "mcp_local.servers.qdrant.main:main", 
             "mcp_local.servers.websearch.server": "mcp_local.servers.websearch.server:main",
             "mcp_local.servers.document_loader.server": "mcp_local.servers.document_loader.server:main",
             "mcp_local.servers.markdown_editor.server": "mcp_local.servers.markdown_editor.server:main",
@@ -49,8 +49,8 @@ def handle_mcp_server_execution():
                 if module_name == "mcp_server_fetch":
                     from mcp_server_fetch import main
                     main()  # Let the server run indefinitely
-                elif module_name == "mcp_server_qdrant.main":
-                    from mcp_server_qdrant.main import main
+                elif module_name == "mcp_local.servers.qdrant.main":
+                    from mcp_local.servers.qdrant.main import main
                     main()  # Let the server run indefinitely
                 elif module_name == "mcp_local.servers.websearch.server":
                     from mcp_local.servers.websearch.server import main
@@ -211,15 +211,6 @@ async def health_check():
 async def startup_event():
     try:
         logger.info("Local backend startup event initiated.")
-        
-        # SECURITY: Apply Qdrant security patches before any MCP operations
-        try:
-            from mcp_local.qdrant_user_filter_patch import apply_qdrant_security_patches
-            apply_qdrant_security_patches()
-        except Exception as patch_error:
-            logger.error(f"CRITICAL SECURITY ERROR: Failed to apply Qdrant security patches: {patch_error}")
-            # Don't fail startup, but log prominently
-            logger.error("❌ QDRANT SEARCH OPERATIONS MAY BE INSECURE - USERS COULD ACCESS OTHER USERS' FILES!")
 
         # REMOVED: The following block that checked LocalUserStore and called _perform_post_authentication_setup.
         # The coordinator will now ONLY be initialized/configured via an explicit call to an auth endpoint

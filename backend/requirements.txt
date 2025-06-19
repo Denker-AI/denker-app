@@ -109,7 +109,7 @@ marshmallow==3.26.1 ; python_version == "3.11"
 matplotlib==3.10.3 ; python_version == "3.11"  # Required by unstructured[image,pdf] for document processing
 mcp-agent==0.0.17 ; python_version == "3.11"
 mcp-server-fetch==2025.1.17 ; python_version == "3.11"
-mcp-server-qdrant==0.7.1 ; python_version == "3.11"
+# mcp-server-qdrant==0.7.1 ; python_version == "3.11"  # Replaced with local secure version
 mcp==1.6.0 ; python_version == "3.11"
 mdurl==0.1.2 ; python_version == "3.11"
 mmh3==5.1.0 ; python_version == "3.11"
