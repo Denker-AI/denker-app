@@ -488,6 +488,19 @@ const ChatAreaNew: React.FC<ChatAreaProps> = ({
       const nearTop = scrollTop < topThreshold;
       setIsNearTop(nearTop);
       
+      // ENHANCED DEBUG LOGGING
+      if (nearTop) {
+        console.log('🔍 SCROLL DEBUG - Near top detected:', {
+          scrollTop,
+          nearTop,
+          isLoadingMore,
+          hasMoreMessages,
+          messagesLength: messages.length,
+          scrollHeight,
+          clientHeight
+        });
+      }
+      
       // Enhanced efficiency checks before attempting to load more
       if (nearTop && !isLoadingMore && hasMoreMessages) {
         // Additional efficiency checks
@@ -495,10 +508,19 @@ const ChatAreaNew: React.FC<ChatAreaProps> = ({
         const timeSinceLastAttempt = now - lastLoadAttemptRef.current;
         const hasMessages = messages.length > 0;
         
+        console.log('🔍 SCROLL DEBUG - Load more conditions:', {
+          nearTop: true,
+          isLoadingMore: false,
+          hasMoreMessages: true,
+          timeSinceLastAttempt,
+          hasMessages,
+          scrollTop,
+          willAttemptLoad: timeSinceLastAttempt >= 1000 && hasMessages && scrollTop > 0
+        });
+        
         // Don't attempt if:
         // 1. We tried very recently (< 1 second ago)
         // 2. We have no messages (nothing to paginate from)
-        // 3. Scroll position is exactly 0 and we already have messages (likely already at first message)
         if (timeSinceLastAttempt < 1000) {
           console.log('📜 Load more skipped - too recent attempt');
           return;
@@ -509,11 +531,6 @@ const ChatAreaNew: React.FC<ChatAreaProps> = ({
           return;
         }
         
-        if (scrollTop === 0 && hasMessages) {
-          console.log('📜 Load more skipped - already at absolute top with messages loaded');
-          return;
-        }
-        
         // Clear any existing debounce
         if (loadMoreDebounceRef.current) {
           clearTimeout(loadMoreDebounceRef.current);
@@ -521,7 +538,7 @@ const ChatAreaNew: React.FC<ChatAreaProps> = ({
         
         // Debounce the load attempt
         loadMoreDebounceRef.current = setTimeout(() => {
-          console.log('📜 Scroll near top, attempting to load more messages...');
+          console.log('🚀 SCROLL DEBUG - Triggering loadMoreMessages!');
           lastLoadAttemptRef.current = Date.now();
           
           // Store scroll position BEFORE loading starts
@@ -531,6 +548,13 @@ const ChatAreaNew: React.FC<ChatAreaProps> = ({
           };
           loadMoreMessages();
         }, 300); // 300ms debounce
+      } else if (nearTop) {
+        // Log why we didn't trigger load more
+        const reasons = [];
+        if (isLoadingMore) reasons.push('already loading');
+        if (!hasMoreMessages) reasons.push('no more messages');
+        
+        console.log('🔍 SCROLL DEBUG - Near top but not loading more:', reasons.join(', '));
       }
     } else {
       setShowScrollDownButton(false);

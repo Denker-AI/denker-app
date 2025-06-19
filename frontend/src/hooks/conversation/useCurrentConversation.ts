@@ -45,13 +45,6 @@ export const useCurrentConversation = () => {
   const currentUser = useAuth().user;
   const previousUserRef = useRef<string | undefined>(undefined);
 
-  // Define pagination state (using imported type)
-  const [paginationState, setPaginationState] = useState<PaginationState>({
-    isLoadingMore: false,
-    hasMoreMessages: true, // Assume true initially
-    oldestMessageId: null,
-  });
-  
   // Clear loaded conversations cache when user changes
   useEffect(() => {
     const currentUserId = currentUser?.sub;
@@ -62,6 +55,16 @@ export const useCurrentConversation = () => {
     }
     previousUserRef.current = currentUserId;
   }, [currentUser?.sub]);
+
+  // Get pagination state from store instead of local state
+  const getCurrentPaginationState = useCallback((): PaginationState => {
+    const currentConv = getCurrentConversation();
+    return currentConv?.pagination || {
+      isLoadingMore: false,
+      hasMoreMessages: true,
+      oldestMessageId: null
+    };
+  }, [getCurrentConversation]);
 
   /**
    * Load the initial batch of messages for a specific conversation
@@ -102,9 +105,6 @@ export const useCurrentConversation = () => {
     // Need to load from API
     console.log(`Loading initial messages for conversation ${id} from API`);
     setState({ loadState: ConversationLoadState.LOADING, error: null });
-    // Reset pagination state as we load all
-    const initialPagination: PaginationState = { isLoadingMore: false, hasMoreMessages: true, oldestMessageId: null };
-    setPaginationState(initialPagination);
 
     try {
       // Call API WITH pagination params - bypass retry for diagnostics
@@ -145,17 +145,12 @@ export const useCurrentConversation = () => {
       
       console.log(`[loadConversation - ${id}] File store state contains ${allFiles.length} files. IDs:`, allFiles.map(f => f.id));
       const messages: Message[] = fetchedMessages.map((msg: any) => {
-        console.log(`[loadConversation - ${id}] Msg ${msg.id}: Raw metadata from backend:`, JSON.parse(JSON.stringify(msg.metadata)));
         const fileIds = msg.metadata?.file_ids || [];
-        if (fileIds.length > 0) {
-          console.log(`[loadConversation - ${id}] Processing message ${msg.id} with file IDs:`, fileIds);
-        }
 
         // Map file IDs to full FileAttachment objects
         const fileAttachments: FileAttachment[] = fileIds
           .map((fileId: string): FileAttachment | null => {
             const fileDetail = allFiles.find(f => f.id === fileId);
-            console.log(`[loadConversation - ${id}] Msg ${msg.id}, FileId ${fileId}: Found fileDetail in store:`, fileDetail);
             if (fileDetail) {
               return {
                 id: fileDetail.id,
@@ -207,7 +202,6 @@ export const useCurrentConversation = () => {
         hasMoreMessages: hasMore,
         oldestMessageId: oldestMessageId,
       };
-      setPaginationState(newPaginationState);
       console.log(`[Pagination Debug] Set oldestMessageId in pagination state: ${oldestMessageId}`);
 
       // Create conversation object
@@ -234,7 +228,6 @@ export const useCurrentConversation = () => {
         console.error(`Parsed error message for state:`, errorMessage);
 
         setState({ loadState: ConversationLoadState.ERROR, error: errorMessage });
-        setPaginationState(prev => ({ ...prev, isLoadingMore: false })); 
         return null;
     }
   }, [api, updateConversation, getCurrentConversation]);
@@ -325,6 +318,8 @@ export const useCurrentConversation = () => {
    * Load more messages (older ones) for the current conversation
    */
   const loadMoreMessages = useCallback(async () => {
+    const paginationState = getCurrentPaginationState();
+    
     if (!currentConversationId || paginationState.isLoadingMore || !paginationState.hasMoreMessages) {
       console.log('Cannot load more messages:', {
         currentConversationId,
@@ -338,16 +333,15 @@ export const useCurrentConversation = () => {
     const cursor = paginationState.oldestMessageId;
     if (!cursor) {
       console.warn('Cannot load more messages without a cursor (oldestMessageId).');
-      setPaginationState(prev => ({ ...prev, isLoadingMore: false }));
+      setConversationPagination(currentConversationId, { isLoadingMore: false });
       return;
     }
 
     console.log(`Loading more messages for ${currentConversationId} before message ${cursor}`);
-    setPaginationState(prev => ({ ...prev, isLoadingMore: true }));
+    setConversationPagination(currentConversationId, { isLoadingMore: true });
 
     try {
       // Call API WITH pagination params - bypass retry for diagnostics
-      // OLD: const response = await api.getConversationWithRetry(id, { limit: MESSAGES_PER_PAGE }, true);
       console.log(`[Diagnostic] Calling api.getConversation directly for load more: ID=${currentConversationId}, Params=${JSON.stringify({ limit: MESSAGES_PER_PAGE, before_message_id: cursor })}`);
       const response = await api.getConversation(currentConversationId, { limit: MESSAGES_PER_PAGE, before_message_id: cursor });
 
@@ -361,10 +355,7 @@ export const useCurrentConversation = () => {
       console.log(`API returned ${fetchedMessages.length} older messages. Has more: ${hasMore}`);
 
       if (fetchedMessages.length === 0) {
-        setPaginationState(prev => ({ ...prev, hasMoreMessages: false, isLoadingMore: false }));
-        if (setConversationPagination) {
-          setConversationPagination(currentConversationId, { hasMoreMessages: false });
-        }
+        setConversationPagination(currentConversationId, { hasMoreMessages: false, isLoadingMore: false });
         return;
       }
 
@@ -420,14 +411,13 @@ export const useCurrentConversation = () => {
       });
 
       // Determine the new oldest message ID from the fetched batch
-      const newOldestMessageId = olderMessages.length > 0 ? olderMessages[olderMessages.length - 1].id : cursor;
+      const newOldestMessageId = olderMessages.length > 0 ? olderMessages[0].id : cursor;
 
       const newPaginationState: PaginationState = {
         isLoadingMore: false,
         hasMoreMessages: hasMore,
         oldestMessageId: newOldestMessageId
       };
-      setPaginationState(newPaginationState);
 
       console.log(`[Pagination Debug] Processed ${olderMessages.length} older messages. New pagination state:`, newPaginationState);
 
@@ -453,17 +443,12 @@ export const useCurrentConversation = () => {
       const errorMessage = err instanceof Error ? err.message : `Failed to load more messages for ${currentConversationId}`;
       console.error(`Error loading more messages for ${currentConversationId}:`, errorMessage);
       // On error, stop loading and prevent further attempts by setting hasMore to false
-      setPaginationState(prev => ({
-        ...prev,
+      setConversationPagination(currentConversationId, { 
         isLoadingMore: false,
         hasMoreMessages: false // Prevent immediate retries
-      }));
-      // Also update the store if possible
-      if (setConversationPagination) {
-        setConversationPagination(currentConversationId, { hasMoreMessages: false });
-      }
+      });
     }
-  }, [api, currentConversationId, paginationState, prependMessages, setConversationPagination, updateConversation, getCurrentConversation]);
+  }, [api, currentConversationId, getCurrentPaginationState, prependMessages, setConversationPagination, updateConversation, getCurrentConversation]);
 
   // Add sendMessage function (modified for API signature and response check)
   const sendMessage = useCallback(async (text: string, attachments: FileAttachment[] = []) => {
@@ -514,22 +499,23 @@ export const useCurrentConversation = () => {
     }
   }, [currentConversationId, addMessage, updateMessage, api]);
 
-  // Get the current conversation
+  // Get the current conversation and its pagination state
   const currentConversation = getCurrentConversation();
+  const paginationState = getCurrentPaginationState();
 
   // Define returnValue AFTER all functions (like loadMoreMessages) are defined
   const returnValue = {
     currentConversation, // The actual conversation object or null
     loadState: state.loadState, // The raw load state enum
     isLoading: state.loadState === ConversationLoadState.LOADING, // Derived boolean for initial loading
-    isLoadingMore: paginationState.isLoadingMore, // Kept for UI consistency, but won't be true
-    hasMoreMessages: paginationState.hasMoreMessages, // Kept for UI consistency, but will be false
+    isLoadingMore: paginationState.isLoadingMore, // From store pagination state
+    hasMoreMessages: paginationState.hasMoreMessages, // From store pagination state
     isError: state.loadState === ConversationLoadState.ERROR, // Derived boolean for error state
     error: state.error, // Actual error message
     
     // Actions
     loadConversation, // Function for initial load (fetches all)
-    loadMoreMessages, // Non-functional placeholder
+    loadMoreMessages, // Function for loading more messages
     updateTitle, // Function to update title
     clearLoadedConversationsCache, // Function to clear cache
     sendMessage, // Function to send a message

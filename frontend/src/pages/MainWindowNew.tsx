@@ -263,8 +263,8 @@ const MainWindowNew: React.FC = () => {
           files: [], // No files attached for selected option flow
         };
         await conversation.addMessage(targetConversationId, userMessage);
-        // Optional: Save this user message to DB if desired
-        // await saveMessageToDatabase(targetConversationId, userMessage.content, 'user');
+        // Save this user message to DB to ensure persistence across reloads
+        await saveMessageToDatabase(targetConversationId, userMessage.id, userMessage.content, 'user');
 
         // --- Step 2: Generate queryId --- 
         const queryId = `query-${uuidv4()}`;

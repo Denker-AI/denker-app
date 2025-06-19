@@ -483,8 +483,7 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
             else:
                 # Create default professional CSS for better typography
                 default_css_content = """
-/* Professional PDF Styling with Better Fonts */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+/* Professional PDF Styling with macOS Native Fonts */
 
 * {
     -webkit-font-smoothing: antialiased;
@@ -492,7 +491,7 @@ def convert_from_markdown(markdown_file: str, output_format: str, output_path: O
 }
 
 body {
-    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
     font-size: 11pt;
     line-height: 1.6;
     color: #2c3e50;
@@ -505,7 +504,7 @@ body {
 
 /* Headings with better typography */
 h1, h2, h3, h4, h5, h6 {
-    font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", "Roboto", "Helvetica Neue", Arial, sans-serif;
     font-weight: 600;
     color: #1a202c;
     margin-top: 24pt;
@@ -543,7 +542,7 @@ p {
 
 /* Code styling with professional monospace font */
 code, pre {
-    font-family: "JetBrains Mono", "Fira Code", "SF Mono", Monaco, "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
+    font-family: "SF Mono", Monaco, "Menlo", "Cascadia Code", "Roboto Mono", Consolas, "Courier New", monospace;
     font-size: 9.5pt;
     background-color: #f7fafc;
     border: 1pt solid #e2e8f0;
@@ -1214,14 +1213,19 @@ def _resolve_and_copy_images(markdown_content: str, markdown_file: str, temp_dir
                     filename = new_filename
                     counter += 1
                 
+                # Use shutil.copy2 to preserve metadata
                 shutil.copy2(source_path, dest_path)
                 logger.info(f"Copied image for conversion: {source_path} -> {dest_path}")
                 
-                # Return updated markdown with new filename (relative to temp directory)
-                return f"![{alt_text}]({filename})"
+                # IMPORTANT: Pandoc is more reliable with absolute paths for local content,
+                # especially when using a PDF engine like wkhtmltopdf.
+                updated_path = str(dest_path.resolve())
+                
+                # Return updated markdown with new filename (absolute path)
+                return f"![{alt_text}]({updated_path})"
                 
             except Exception as e:
-                logger.warning(f"Could not copy image {source_path}: {e}")
+                logger.warning(f"Could not copy image {source_path} to {dest_path}: {e}")
                 return match.group(0)  # Return original on error
         else:
             # If not found, return original (will result in broken image)
