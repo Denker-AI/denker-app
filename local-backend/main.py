@@ -211,6 +211,15 @@ async def health_check():
 async def startup_event():
     try:
         logger.info("Local backend startup event initiated.")
+        
+        # SECURITY: Apply Qdrant security patches before any MCP operations
+        try:
+            from mcp_local.qdrant_user_filter_patch import apply_qdrant_security_patches
+            apply_qdrant_security_patches()
+        except Exception as patch_error:
+            logger.error(f"CRITICAL SECURITY ERROR: Failed to apply Qdrant security patches: {patch_error}")
+            # Don't fail startup, but log prominently
+            logger.error("❌ QDRANT SEARCH OPERATIONS MAY BE INSECURE - USERS COULD ACCESS OTHER USERS' FILES!")
 
         # REMOVED: The following block that checked LocalUserStore and called _perform_post_authentication_setup.
         # The coordinator will now ONLY be initialized/configured via an explicit call to an auth endpoint

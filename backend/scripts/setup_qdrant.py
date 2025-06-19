@@ -65,6 +65,20 @@ def create_collection(
             field_schema=rest.PayloadSchemaType.KEYWORD,
         )
         
+        # SECURITY: Add user_id index for filtering - CRITICAL for preventing cross-user data access
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name="metadata.user_id",
+            field_schema=rest.PayloadSchemaType.KEYWORD,
+        )
+        
+        # Also add file_id index for efficient file-based filtering
+        client.create_payload_index(
+            collection_name=collection_name,
+            field_name="metadata.file_id",
+            field_schema=rest.PayloadSchemaType.KEYWORD,
+        )
+        
         logger.info(f"Collection '{collection_name}' created successfully")
         return True
     

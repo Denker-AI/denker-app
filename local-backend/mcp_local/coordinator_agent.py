@@ -30,7 +30,7 @@ from mcp_agent.workflows.llm.augmented_llm import AugmentedLLM, RequestParams
 from mcp_agent.workflows.llm.augmented_llm_anthropic import AnthropicAugmentedLLM
 from mcp_agent.workflows.orchestrator.orchestrator import Orchestrator
 from mcp_agent.workflows.router.router_llm import LLMRouter
-from mcp_agent.workflows.router.router_llm_anthropic import AnthropicLLMRouter
+from .fixed_router_anthropic import FixedAnthropicLLMRouter as AnthropicLLMRouter
 from mcp_agent.logging.logger import LoggingConfig
 from mcp_agent.logging.events import Event, EventFilter
 from mcp_agent.human_input.types import HumanInputRequest

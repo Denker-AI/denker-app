@@ -764,6 +764,12 @@ img {
                 logger.info(f"Added bundled bin directory to PATH: {bundled_bin_dir}")
         
         try:
+            # Set working directory to temp directory for better image resolution
+            cwd = temp_dir if temp_dir else os.path.dirname(os.path.abspath(markdown_file))
+            
+            logger.info(f"Running pandoc conversion with working directory: {cwd}")
+            logger.debug(f"Full pandoc command: {' '.join(cmd)}")
+            
             # Run conversion with timeout
             result = subprocess.run(
                 cmd, 
@@ -771,6 +777,7 @@ img {
                 capture_output=True, 
                 text=True, 
                 env=env,
+                cwd=cwd,  # Set working directory
                 timeout=300  # 5 minute timeout
             )
             
@@ -1217,11 +1224,13 @@ def _resolve_and_copy_images(markdown_content: str, markdown_file: str, temp_dir
                 shutil.copy2(source_path, dest_path)
                 logger.info(f"Copied image for conversion: {source_path} -> {dest_path}")
                 
-                # IMPORTANT: Pandoc is more reliable with absolute paths for local content,
-                # especially when using a PDF engine like wkhtmltopdf.
-                updated_path = str(dest_path.resolve())
+                # Use relative path within temp directory for wkhtmltopdf compatibility
+                # This ensures the PDF engine can find the image relative to the markdown file
+                updated_path = filename
                 
-                # Return updated markdown with new filename (absolute path)
+                logger.info(f"Updated image reference: {relative_path} -> {updated_path}")
+                
+                # Return updated markdown with new filename (relative path)
                 return f"![{alt_text}]({updated_path})"
                 
             except Exception as e:

@@ -898,7 +898,10 @@ async def search_photos(query: str,
     Returns:
         Search results with photo IDs and metadata
     """
-    return await search_photos_tool(query, per_page=per_page, orientation=orientation, color=color, category=category)
+    # Get API key from environment to ensure it's available in PyInstaller
+    import os
+    api_key = os.getenv('UNSPLASH_ACCESS_KEY')
+    return await search_photos_tool(query, per_page=per_page, orientation=orientation, color=color, category=category, api_key=api_key)
 
 @app.tool()
 async def download_photo(photo_id: str, 
@@ -917,7 +920,10 @@ async def download_photo(photo_id: str,
     Returns:
         Information about the downloaded photo including local path
     """
-    return await download_photo_tool(photo_id, size, file_name, add_credit)
+    # Get API key from environment to ensure it's available in PyInstaller
+    import os
+    api_key = os.getenv('UNSPLASH_ACCESS_KEY')
+    return await download_photo_tool(photo_id, size, file_name, custom_width=None, custom_height=None, api_key=api_key)
 
 @app.tool()
 def get_photo_categories() -> Dict[str, Any]:
@@ -953,7 +959,10 @@ async def search_and_download_photo(query: str,
         1. Use this tool to get a photo: photo = await search_and_download_photo("business meeting")
         2. Use add_image tool to add it to document: add_image("document.md", photo["file_path"], "Business meeting photo")
     """
-    return await search_and_download_photo_tool(query, size, orientation, category, filename)
+    # Get API key from environment to ensure it's available in PyInstaller
+    import os
+    api_key = os.getenv('UNSPLASH_ACCESS_KEY')
+    return await search_and_download_photo_tool(query, size, orientation, category, filename, api_key=api_key)
 
 @app.tool()
 async def create_document_with_chart(content: str,

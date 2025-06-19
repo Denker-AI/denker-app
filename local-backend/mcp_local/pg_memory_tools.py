@@ -11,8 +11,16 @@ import uuid
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 import asyncpg
-from config.settings import settings
 import httpx
+
+# Robust import for settings
+try:
+    from config.settings import settings
+except ImportError:
+    # Fallback for PyInstaller or when config module is not available
+    class MockSettings:
+        BACKEND_URL = "http://localhost:8000"
+    settings = MockSettings()
 
 # Attempt to import LocalUserStore
 # This might need adjustment based on actual file structure and potential circular dependencies

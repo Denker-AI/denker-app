@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from mcp_agent.agents.agent import Agent
 from mcp_agent.workflows.orchestrator.orchestrator import Orchestrator
 from mcp_agent.workflows.router.router_llm import LLMRouter
-from mcp_agent.workflows.router.router_llm_anthropic import AnthropicLLMRouter
+from .fixed_router_anthropic import FixedAnthropicLLMRouter as AnthropicLLMRouter
 from mcp_agent.workflows.llm.augmented_llm_anthropic import AnthropicAugmentedLLM
 from mcp_agent.workflows.llm.augmented_llm import RequestParams
 from .coordinator_agents_config import DEFAULT_MODEL
@@ -279,8 +279,9 @@ async def create_agent_llm(agent: Agent, create_anthropic_llm_fn: Optional[Calla
     if create_anthropic_llm_fn:
         return create_anthropic_llm_fn(agent=agent)
     
-    # Create directly if no function provided
-    return AnthropicAugmentedLLM(
+    # Create directly if no function provided - use our Fixed implementation
+    from .coordinator_agent import FixedAnthropicAugmentedLLM
+    return FixedAnthropicAugmentedLLM(
         agent=agent,
         instruction=agent.instruction
     )
