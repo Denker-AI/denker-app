@@ -493,7 +493,7 @@ async def process_orchestrator_workflow(
             
         # Explicitly set the model for the orchestrator's planner LLM to override model selection
         if hasattr(orchestrator, 'planner') and orchestrator.planner is not None:
-            ORCHESTRATOR_PLANNER_MODEL = "claude-3-7-sonnet-latest" # Use high-quality Sonnet for better plans
+            ORCHESTRATOR_PLANNER_MODEL = "claude-3-7-sonnet@20250219" # Use high-quality Sonnet for better plans
             if not hasattr(orchestrator.planner, 'default_request_params') or orchestrator.planner.default_request_params is None:
                 orchestrator.planner.default_request_params = RequestParams(model=ORCHESTRATOR_PLANNER_MODEL, maxTokens=8192)  # Restore higher limit for complex plans
             else:
@@ -567,7 +567,7 @@ async def process_orchestrator_workflow(
         
         # --- MODIFIED: Define and pass specific RequestParams to orchestrator.generate_str ---
         orchestrator_call_params = RequestParams(
-            model="claude-3-7-sonnet-latest",  # Use high-quality Sonnet for better results
+            model="claude-3-7-sonnet@20250219",  # Use high-quality Sonnet for better results
             maxTokens=4096,  # Good balance for orchestrator calls
             use_history=False # Orchestrator's generate method itself does not use history for planning
         )

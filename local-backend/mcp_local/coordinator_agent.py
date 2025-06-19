@@ -138,12 +138,16 @@ _overload_circuit_breaker = OverloadCircuitBreaker()
 # --- END ADDED ---
 
 # --- ADDED: Pydantic model for Decider Response --- 
-# OPTIMIZED: Simplified Decision Model - 50% faster with only essential fields
+# OPTIMIZED: Simplified Decision Model with structured enforcement
 class DecisionResponseModel(BaseModel):
     workflow_type: Literal["simple", "router", "orchestrator"]
     simple_response: Optional[str] = ""
     needs_clarification: bool = False
     clarifying_questions: Optional[List[str]] = Field(default_factory=list)
+    
+    class Config:
+        # Ensure JSON serialization works properly
+        use_enum_values = True
 # --- END ADDED --- 
 
 # --- ADDED: Environment variable to easily switch between Anthropic modes ---
@@ -1739,7 +1743,7 @@ class CoordinatorAgent:
                 }
                 return overloaded_decision
             
-            # OPTIMIZED: Use generate_str for 50% faster decisions (single API call instead of double)
+            # OPTIMIZED: Use generate_str with improved parsing (1 API call, robust fallback)
             str_response = await decider_llm.generate_str(
                 message=full_messages_for_decider,
                 request_params=RequestParams(
@@ -1749,8 +1753,37 @@ class CoordinatorAgent:
             )
             logger.debug(f"Decider LLM string response: {str_response}")
 
-            # Parse JSON response with robust error handling
-            decision = self._parse_decision_response(str_response, query_id)
+            # Parse JSON response with enhanced error handling and structured fallback
+            try:
+                decision = self._parse_decision_response(str_response, query_id)
+            except Exception as parse_error:
+                logger.warning(f"[{query_id}] Primary parsing failed, attempting structured fallback: {parse_error}")
+                
+                # Fallback to structured generation only if JSON parsing completely fails
+                try:
+                    structured_response = await decider_llm.generate_structured(
+                        message=full_messages_for_decider,
+                        response_model=DecisionResponseModel,
+                        request_params=RequestParams(
+                            temperature=0.2,
+                            maxTokens=1000
+                        )
+                    )
+                    
+                    decision = {
+                        "workflow_type": structured_response.workflow_type,
+                        "simple_response": structured_response.simple_response or "",
+                        "needs_clarification": structured_response.needs_clarification,
+                        "clarifying_questions": structured_response.clarifying_questions or [],
+                        "raw_response": str(structured_response)
+                    }
+                    
+                    decision["explanation"] = self._generate_decision_explanation(decision)
+                    logger.info(f"[{query_id}] Structured fallback successful")
+                    
+                except Exception as structured_error:
+                    logger.error(f"[{query_id}] Both parsing methods failed: {structured_error}")
+                    raise parse_error  # Re-raise original error to trigger default decision
             logger.info(f"Successfully parsed decision: {decision}")
 
             # Send the decision update via WebSocket and wait for it
@@ -1780,6 +1813,7 @@ class CoordinatorAgent:
                     "explanation": "Service is currently overloaded",
                     "simple_response": "The service is currently overloaded. Please try again in a few moments.",
                     "needs_clarification": False,
+                    "clarifying_questions": [],
                     "overloaded": True  # Special flag to indicate this is an overload situation
                 }
                 
@@ -1796,10 +1830,17 @@ class CoordinatorAgent:
                 return overloaded_decision
             
             # Log the error during the decision process
-            logger.error(f"Error getting or processing workflow decision for query {query_id}: {str(e)}", exc_info=True)
+            logger.error(f"Error getting structured decision for query {query_id}: {str(e)}", exc_info=True)
 
-            # Create a default decision (router workflow)
-            default_decision = {"workflow_type": "router", "explanation": f"Error in decision making: {str(e)}. Falling back to router."}
+            # Create a default decision (router workflow) with all required fields
+            default_decision = {
+                "workflow_type": "router", 
+                "explanation": f"Error in decision making: {str(e)}. Using router workflow as fallback.",
+                "simple_response": "",
+                "needs_clarification": False,
+                "clarifying_questions": [],
+                "raw_response": None
+            }
 
             # Send an error update via WebSocket (fire and forget)
             if query_id and self.websocket_manager.is_connected(query_id):
@@ -2591,20 +2632,20 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
         """
         # Use 1-hour cache for static content and long-running workflows
         if self._use_long_cache_for_workflows:
-            # Tools should always use 1-hour cache since they rarely change
+            # Tools should always use cache since they rarely change
             if role == "tools":
-                self.logger.debug(f"[Cache Strategy] Tools content → 1-hour cache (static)")
-                return {"type": "ephemeral", "ttl": "1h"}
+                self.logger.debug(f"[Cache Strategy] Tools content → ephemeral cache (static)")
+                return {"type": "ephemeral"}
             
-            # System instructions should use 1-hour cache since they're static
+            # System instructions should use cache since they're static
             if role == "system":
-                self.logger.debug(f"[Cache Strategy] System instructions → 1-hour cache (static)")
-                return {"type": "ephemeral", "ttl": "1h"}
+                self.logger.debug(f"[Cache Strategy] System instructions → ephemeral cache (static)")
+                return {"type": "ephemeral"}
             
-            # Conversation history should use 1-hour cache for long workflows
+            # Conversation history should use cache for long workflows
             if role == "conversation_history":
-                self.logger.debug(f"[Cache Strategy] Conversation history → 1-hour cache (long workflow)")
-                return {"type": "ephemeral", "ttl": "1h"}
+                self.logger.debug(f"[Cache Strategy] Conversation history → ephemeral cache (long workflow)")
+                return {"type": "ephemeral"}
             
             # Check if this looks like workflow or coordination content
             workflow_indicators = [
@@ -2613,8 +2654,8 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
             ]
             
             if role in ["user", "assistant"] and any(indicator in content.lower() for indicator in workflow_indicators):
-                self.logger.debug(f"[Cache Strategy] Workflow content ({role}) → 1-hour cache (workflow patterns detected)")
-                return {"type": "ephemeral", "ttl": "1h"}  # 1-hour cache for workflows
+                self.logger.debug(f"[Cache Strategy] Workflow content ({role}) → ephemeral cache (workflow patterns detected)")
+                return {"type": "ephemeral"}  # Ephemeral cache for workflows
         
         # Default to 5-minute cache
         self.logger.debug(f"[Cache Strategy] Regular content ({role}) → 5-minute cache (default)")
@@ -3075,8 +3116,8 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                     if isinstance(tool, dict) and tool.get("cache_control"):
                         tools_cached = True
                         cache_count += 1
-                        if tool.get("cache_control", {}).get("ttl") == "1h":
-                            extended_cache_count += 1
+                        # Note: Extended cache TTL no longer used, all cache is ephemeral
+                        extended_cache_count += 1
             
             # Check system caching  
             if arguments.get("system"):
@@ -3086,8 +3127,8 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                         if isinstance(block, dict) and block.get("cache_control"):
                             system_cached = True
                             cache_count += 1
-                            if block.get("cache_control", {}).get("ttl") == "1h":
-                                extended_cache_count += 1
+                            # Note: Extended cache TTL no longer used, all cache is ephemeral
+                            extended_cache_count += 1
             
             # Check messages caching
             for msg in cached_messages:
@@ -3096,10 +3137,10 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
                     for block in content:
                         if isinstance(block, dict) and block.get("cache_control"):
                             cache_count += 1
-                            if block.get("cache_control", {}).get("ttl") == "1h":
-                                extended_cache_count += 1
+                            # Note: Extended cache TTL no longer used, all cache is ephemeral
+                            extended_cache_count += 1
             
-            self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Cache Strategy Applied - Tools: {tools_cached}, System: {system_cached}, Total Blocks: {cache_count} ({extended_cache_count} with 1h TTL)")
+            self.logger.info(f"[FixedAnthropicAugmentedLLM.generate] Cache Strategy Applied - Tools: {tools_cached}, System: {system_cached}, Total Blocks: {cache_count} ({extended_cache_count} with ephemeral cache)")
     # --- END ADDED ---
 
             self.logger.debug(f"{arguments}")
@@ -3274,7 +3315,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
 
     def _has_extended_cache_content(self, messages: List[MessageParam], system_content: Any = None, tools: List[ToolParam] = None) -> bool:
         """
-        Check if any cached content is using extended TTL (1-hour cache).
+        Check if any content has cache control enabled.
         
         Args:
             messages: List of messages to check
@@ -3282,24 +3323,23 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
             tools: List of tools to check
             
         Returns:
-            bool: True if any content uses extended cache TTL
+            bool: True if any content uses cache control
         """
         # Check tools
         if tools:
             for tool in tools:
-                if isinstance(tool, dict) and tool.get("cache_control", {}).get("ttl") == "1h":
+                if isinstance(tool, dict) and tool.get("cache_control"):
                     return True
         
         # Check system content
         if system_content:
             if isinstance(system_content, list):
                 for block in system_content:
-                    if isinstance(block, dict) and block.get("cache_control", {}).get("ttl") == "1h":
+                    if isinstance(block, dict) and block.get("cache_control"):
                         return True
             elif isinstance(system_content, str):
-                # If system is still a string, check if it would get 1h cache
-                cache_control = self._get_cache_control_type(system_content, "system")
-                if cache_control.get("ttl") == "1h":
+                # If system is still a string, check if it would get cache
+                if self._should_cache_content(system_content, "system"):
                     return True
         
         # Check messages
@@ -3307,7 +3347,7 @@ class FixedAnthropicAugmentedLLM(AnthropicAugmentedLLM):
             content = msg.get("content", "")
             if isinstance(content, list):
                 for block in content:
-                    if isinstance(block, dict) and block.get("cache_control", {}).get("ttl") == "1h":
+                    if isinstance(block, dict) and block.get("cache_control"):
                         return True
         
         return False
