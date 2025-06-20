@@ -1,6 +1,0 @@
-[submodule "mcp-fetch"]
-	path = submodules/mcp-fetch
-	url = ...
-[submodule "mcp-filesystem"]
-	path = submodules/mcp-filesystem
-	url = ...
