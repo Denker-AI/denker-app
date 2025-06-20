@@ -1,12 +1,3 @@
-[submodule "mcp-server-qdrant"]
-	path = submodules/mcp-server-qdrant
-	url = git@github.com:qdrant/mcp-server-qdrant.git
-[submodule "Quickchart-MCP-Server"]
-	path = submodules/Quickchart-MCP-Server
-	url = git@github.com:GongRzhe/Quickchart-MCP-Server.git
-[submodule "mcp-agent"]
-	path = submodules/mcp-agent
-	url = git@github.com:lastmile-ai/mcp-agent.git
 [submodule "mcp-fetch"]
 	path = submodules/mcp-fetch
 	url = ...
